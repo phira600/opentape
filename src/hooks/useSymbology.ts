@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
+import type { Json } from "@/integrations/supabase/types";
 
-interface Symbol {
+export interface Symbol {
   id: string;
   symbol: string;
   isin: string | null;
@@ -11,6 +12,8 @@ interface Symbol {
   source: string;
   mic: string | null;
   segment: string | null;
+  tick_table: string | null;
+  raw_data: Json | null;
 }
 
 export function useSymbology() {
@@ -31,7 +34,7 @@ export function useSymbology() {
     while (hasMore) {
       const { data, error } = await supabase
         .from("symbology")
-        .select("id, symbol, isin, name, venue, currency, source, mic, segment")
+        .select("id, symbol, isin, name, venue, currency, source, mic, segment, tick_table, raw_data")
         .order("symbol", { ascending: true })
         .range(page * pageSize, (page + 1) * pageSize - 1);
       
