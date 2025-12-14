@@ -1,5 +1,4 @@
-import { useEffect, useState } from "react";
-import { supabase } from "@/integrations/supabase/client";
+import { useState, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
@@ -7,77 +6,42 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, Search, ChevronLeft, ChevronRight } from "lucide-react";
-import { format } from "date-fns";
 import { useSymbology } from "@/hooks/useSymbology";
 
-interface Trade {
-  id: string;
-  symbol: string;
-  price: number;
-  quantity: number;
-  trade_time: string;
-  venue: string;
-  market_mechanism: string | null;
-  trading_mode: string | null;
-}
-
-export function TradesTable() {
-  const [trades, setTrades] = useState<Trade[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+export function SymbolExplorer() {
+  const { symbols, venues, isLoading } = useSymbology();
   const [symbolFilter, setSymbolFilter] = useState("");
   const [venueFilter, setVenueFilter] = useState("all");
   const [page, setPage] = useState(0);
   const pageSize = 20;
-  const { venues } = useSymbology();
 
-  const fetchTrades = async () => {
-    setIsLoading(true);
+  const filteredSymbols = useMemo(() => {
+    return symbols.filter((s) => {
+      const matchesSymbol = !symbolFilter || 
+        s.symbol.toLowerCase().includes(symbolFilter.toLowerCase()) ||
+        s.name?.toLowerCase().includes(symbolFilter.toLowerCase()) ||
+        s.isin?.toLowerCase().includes(symbolFilter.toLowerCase());
+      const matchesVenue = venueFilter === "all" || s.venue === venueFilter;
+      return matchesSymbol && matchesVenue;
+    });
+  }, [symbols, symbolFilter, venueFilter]);
 
-    let query = supabase
-      .from("trades_normalized")
-      .select("id, symbol, price, quantity, trade_time, venue, market_mechanism, trading_mode")
-      .order("trade_time", { ascending: false })
-      .range(page * pageSize, (page + 1) * pageSize - 1);
+  const paginatedSymbols = useMemo(() => {
+    const start = page * pageSize;
+    return filteredSymbols.slice(start, start + pageSize);
+  }, [filteredSymbols, page]);
 
-    if (symbolFilter) {
-      query = query.ilike("symbol", `%${symbolFilter}%`);
-    }
-    if (venueFilter && venueFilter !== "all") {
-      query = query.eq("venue", venueFilter);
-    }
-
-    const { data, error } = await query;
-
-    if (!error && data) {
-      setTrades(data);
-    }
-    setIsLoading(false);
-  };
-
-  useEffect(() => {
-    fetchTrades();
-  }, [symbolFilter, venueFilter, page]);
-
-  const formatPrice = (price: number) => {
-    return new Intl.NumberFormat("en-US", {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 6,
-    }).format(price);
-  };
-
-  const formatQuantity = (quantity: number) => {
-    return new Intl.NumberFormat("en-US").format(quantity);
-  };
+  const totalPages = Math.ceil(filteredSymbols.length / pageSize);
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Trade Data Explorer</CardTitle>
+        <CardTitle>Symbol Reference Data</CardTitle>
         <div className="flex flex-col sm:flex-row gap-3 mt-4">
           <div className="relative flex-1">
             <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
             <Input
-              placeholder="Filter by symbol..."
+              placeholder="Search by symbol, name, or ISIN..."
               value={symbolFilter}
               onChange={(e) => {
                 setSymbolFilter(e.target.value);
@@ -112,9 +76,9 @@ export function TradesTable() {
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
-        ) : trades.length === 0 ? (
+        ) : filteredSymbols.length === 0 ? (
           <p className="text-muted-foreground text-center py-12">
-            No trades found. Add a data source and run a fetch to see data.
+            No symbols found. Run the symbology fetch to populate data.
           </p>
         ) : (
           <>
@@ -123,37 +87,33 @@ export function TradesTable() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Symbol</TableHead>
-                    <TableHead>Price</TableHead>
-                    <TableHead>Quantity</TableHead>
+                    <TableHead>Name</TableHead>
+                    <TableHead>ISIN</TableHead>
                     <TableHead>Venue</TableHead>
-                    <TableHead>MMT</TableHead>
-                    <TableHead>Time</TableHead>
+                    <TableHead>Currency</TableHead>
+                    <TableHead>MIC</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {trades.map((trade) => (
-                    <TableRow key={trade.id}>
+                  {paginatedSymbols.map((sym) => (
+                    <TableRow key={sym.id}>
                       <TableCell className="font-mono font-medium">
-                        {trade.symbol}
+                        {sym.symbol}
                       </TableCell>
-                      <TableCell className="font-mono">
-                        {formatPrice(trade.price)}
+                      <TableCell className="max-w-[200px] truncate" title={sym.name || ""}>
+                        {sym.name || "-"}
                       </TableCell>
-                      <TableCell className="font-mono">
-                        {formatQuantity(trade.quantity)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant="outline">{trade.venue}</Badge>
+                      <TableCell className="font-mono text-sm">
+                        {sym.isin || "-"}
                       </TableCell>
                       <TableCell>
-                        {trade.market_mechanism && (
-                          <Badge variant="secondary" className="text-xs">
-                            {trade.market_mechanism}
-                          </Badge>
-                        )}
+                        <Badge variant="outline">{sym.venue}</Badge>
+                      </TableCell>
+                      <TableCell>
+                        {sym.currency || "-"}
                       </TableCell>
                       <TableCell className="text-muted-foreground text-sm">
-                        {format(new Date(trade.trade_time), "MMM d, HH:mm:ss")}
+                        {sym.mic || "-"}
                       </TableCell>
                     </TableRow>
                   ))}
@@ -162,7 +122,7 @@ export function TradesTable() {
             </div>
             <div className="flex items-center justify-between mt-4">
               <p className="text-sm text-muted-foreground">
-                Page {page + 1}
+                Page {page + 1} of {totalPages} ({filteredSymbols.length} symbols)
               </p>
               <div className="flex gap-2">
                 <Button
@@ -177,7 +137,7 @@ export function TradesTable() {
                   variant="outline"
                   size="sm"
                   onClick={() => setPage((p) => p + 1)}
-                  disabled={trades.length < pageSize}
+                  disabled={page >= totalPages - 1}
                 >
                   <ChevronRight className="h-4 w-4" />
                 </Button>

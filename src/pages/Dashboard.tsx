@@ -7,6 +7,7 @@ import { AddSourceDialog } from "@/components/dashboard/AddSourceDialog";
 import { ActivityLog } from "@/components/dashboard/ActivityLog";
 import { TradesTable } from "@/components/dashboard/TradesTable";
 import { PriceChart } from "@/components/dashboard/PriceChart";
+import { SymbolExplorer } from "@/components/dashboard/SymbolExplorer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2 } from "lucide-react";
 
@@ -51,6 +52,7 @@ export default function Dashboard() {
           <TabsList>
             <TabsTrigger value="sources">Data Sources</TabsTrigger>
             <TabsTrigger value="explorer">Trade Explorer</TabsTrigger>
+            <TabsTrigger value="symbols">Symbol Explorer</TabsTrigger>
             <TabsTrigger value="charts">Charts</TabsTrigger>
           </TabsList>
 
@@ -81,6 +83,10 @@ export default function Dashboard() {
 
           <TabsContent value="explorer">
             <TradesTable />
+          </TabsContent>
+
+          <TabsContent value="symbols">
+            <SymbolExplorer />
           </TabsContent>
 
           <TabsContent value="charts">
