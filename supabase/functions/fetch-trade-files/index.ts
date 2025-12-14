@@ -9,7 +9,7 @@ interface JobConfiguration {
   id: string
   name: string
   source_url: string
-  source_type: 'cboe' | 'lseg' | 'custom'
+  source_type: 'cboe' | 'nasdaq' | 'lseg' | 'custom'
   is_enabled: boolean
 }
 
@@ -92,6 +92,13 @@ Deno.serve(async (req) => {
           actualUrl = cboeResult.url
           fileName = cboeResult.fileName
           console.log(`Fetched CBOE data from: ${actualUrl}`)
+        } else if (job.source_type === 'nasdaq') {
+          // Nasdaq Nordic has dynamic URLs based on time
+          const nasdaqResult = await fetchNasdaqData(job.source_url)
+          rawData = nasdaqResult.data
+          actualUrl = nasdaqResult.url
+          fileName = nasdaqResult.fileName
+          console.log(`Fetched Nasdaq data from: ${actualUrl}`)
         } else {
           // Standard fetch for other sources
           const response = await fetch(job.source_url, {
@@ -145,6 +152,8 @@ Deno.serve(async (req) => {
         
         if (job.source_type === 'cboe') {
           trades = parseCboeData(rawData, job.name)
+        } else if (job.source_type === 'nasdaq') {
+          trades = parseNasdaqData(rawData, job.name)
         } else if (job.source_type === 'lseg') {
           trades = parseLsegData(rawData, contentType, job.name)
         } else {
@@ -383,8 +392,136 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
   return trades
 }
 
+// Nasdaq URL pattern: https://tradereports.nasdaq.com/shares/trade-reports/post-trade
+// Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM}.csv
+async function fetchNasdaqData(sourceUrl: string): Promise<{ data: string; url: string; fileName: string }> {
+  // Get current time minus 5 minutes (data may be slightly delayed)
+  const now = new Date()
+  const fetchTime = new Date(now.getTime() - 5 * 60 * 1000)
+  
+  const dateStr = fetchTime.toISOString().split('T')[0] // YYYY-MM-DD
+  const hour = fetchTime.getUTCHours().toString().padStart(2, '0')
+  const minute = fetchTime.getUTCMinutes().toString().padStart(2, '0')
+  
+  // Try a few different times in case exact minute isn't available
+  const timeVariants = [
+    `${hour}${minute}`,
+    `${hour}${(Math.floor(parseInt(minute) / 5) * 5).toString().padStart(2, '0')}`, // Round to 5-min
+    `${hour}00`, // Start of hour
+  ]
+  
+  const baseUrl = 'https://tradereports.nasdaq.com/shares/trade-reports/post-trade'
+  
+  for (const time of timeVariants) {
+    const fileName = `NordicEquity-posttrade-${dateStr}T${time}.csv`
+    const url = `${baseUrl}/${fileName}`
+    
+    try {
+      console.log(`Trying Nasdaq URL: ${url}`)
+      const response = await fetch(url, {
+        headers: { 
+          'Accept': 'text/csv, */*',
+          'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+        },
+        redirect: 'follow'
+      })
+
+      if (response.ok) {
+        const data = await response.text()
+        // Nasdaq files start with "sep=;" indicator
+        if (data && (data.includes('sep=;') || data.includes('Trading date and time'))) {
+          return { data, url, fileName }
+        }
+      }
+    } catch (e) {
+      console.log(`Failed to fetch ${url}: ${e}`)
+    }
+  }
+
+  throw new Error(`Failed to fetch Nasdaq data. Tried multiple time variants for ${dateStr}.`)
+}
+
+// Parse Nasdaq Nordic CSV format (semicolon-separated)
+// Columns: Trading date and time;Instrument identification code;Publication date and time;Price currency;
+//          Venue of execution;Venue of publication;Price notation;Transaction to be cleared;MMT flag;
+//          Transaction identification code;Trade type;Price;Quantity;Buyer;Seller;...
+function parseNasdaqData(rawData: string, jobName: string): TradeRecord[] {
+  const trades: TradeRecord[] = []
+  
+  try {
+    const lines = rawData.split('\n').filter(line => line.trim())
+    
+    if (lines.length < 3) {
+      console.log('Nasdaq: No data lines found')
+      return trades
+    }
+
+    // Skip the "sep=;" line if present
+    let headerLineIdx = 0
+    if (lines[0].includes('sep=')) {
+      headerLineIdx = 1
+    }
+
+    // Parse header to find column indices
+    const headers = lines[headerLineIdx].split(';').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'))
+    console.log(`Nasdaq headers: ${headers.slice(0, 10).join(', ')}...`)
+    
+    const indices = {
+      tradingDateTime: headers.findIndex(h => h === 'trading_date_and_time'),
+      symbol: headers.findIndex(h => h === 'instrument_identification_code'),
+      price: headers.findIndex(h => h === 'price'),
+      quantity: headers.findIndex(h => h === 'quantity'),
+      venue: headers.findIndex(h => h === 'venue_of_execution'),
+      currency: headers.findIndex(h => h === 'price_currency'),
+      mmtFlag: headers.findIndex(h => h === 'mmt_flag'),
+      transactionId: headers.findIndex(h => h === 'transaction_identification_code'),
+      tradeType: headers.findIndex(h => h === 'trade_type'),
+    }
+
+    console.log(`Nasdaq column indices: symbol=${indices.symbol}, price=${indices.price}, qty=${indices.quantity}`)
+
+    for (let i = headerLineIdx + 1; i < lines.length; i++) {
+      const values = lines[i].split(';').map(v => v.trim())
+      
+      if (values.length < 10) continue
+
+      const symbol = indices.symbol >= 0 ? values[indices.symbol] : ''
+      const priceStr = indices.price >= 0 ? values[indices.price] : '0'
+      const qtyStr = indices.quantity >= 0 ? values[indices.quantity] : '0'
+      const tradeTime = indices.tradingDateTime >= 0 ? values[indices.tradingDateTime] : new Date().toISOString()
+      const venue = indices.venue >= 0 ? values[indices.venue] : 'NASDAQ'
+      
+      // Skip if missing required fields
+      if (!symbol || symbol === '') continue
+      
+      const price = parseFloat(priceStr) || 0
+      const quantity = parseFloat(qtyStr) || 0
+      
+      // Skip zero-price or zero-quantity trades
+      if (price === 0 || quantity === 0) continue
+
+      trades.push({
+        symbol,
+        price,
+        quantity,
+        trade_time: tradeTime,
+        venue: venue || 'NASDAQ',
+        market_mechanism: indices.mmtFlag >= 0 ? values[indices.mmtFlag] : undefined,
+        trading_mode: indices.tradeType >= 0 ? values[indices.tradeType] : undefined,
+        transaction_id: indices.transactionId >= 0 ? values[indices.transactionId] : undefined,
+      })
+    }
+
+    console.log(`Nasdaq: Parsed ${trades.length} trades from ${lines.length - headerLineIdx - 1} lines`)
+  } catch (e) {
+    console.error(`Failed to parse Nasdaq data for ${jobName}: ${e}`)
+  }
+  
+  return trades
+}
+
 // Helper to parse CSV lines properly (handles quoted fields with commas)
-function parseCSVLine(line: string): string[] {
+function parseCSVLine(line: string, separator: string = ','): string[] {
   const result: string[] = []
   let current = ''
   let inQuotes = false
@@ -394,7 +531,7 @@ function parseCSVLine(line: string): string[] {
     
     if (char === '"') {
       inQuotes = !inQuotes
-    } else if (char === ',' && !inQuotes) {
+    } else if (char === separator && !inQuotes) {
       result.push(current)
       current = ''
     } else {
