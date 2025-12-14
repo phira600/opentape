@@ -201,9 +201,10 @@ function parseCboeSymbolCsv(csvData: string, venue: string): SymbolRecord[] {
     const metadataLine = lines[0]
     console.log(`Metadata line: ${metadataLine.substring(0, 100)}`)
     
-    // Parse headers from line 2 (index 1)
-    const headers = lines[1].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'))
-    console.log(`Symbol CSV headers: ${headers.slice(0, 10).join(', ')}`)
+    // Parse headers from line 2 (index 1) - keep original names for raw_data
+    const rawHeaders = lines[1].split(',').map(h => h.trim())
+    const headers = rawHeaders.map(h => h.toLowerCase().replace(/\s+/g, '_'))
+    console.log(`Symbol CSV headers: ${headers.join(', ')}`)
     
     const indices = {
       // bats_name is the symbol/ticker
@@ -226,6 +227,14 @@ function parseCboeSymbolCsv(csvData: string, venue: string): SymbolRecord[] {
       const symbol = indices.symbol >= 0 ? values[indices.symbol]?.trim() : ''
       if (!symbol) continue
       
+      // Build raw_data object with ALL columns from CSV
+      const rawData: Record<string, string> = {}
+      for (let j = 0; j < headers.length; j++) {
+        if (values[j] !== undefined && values[j].trim() !== '') {
+          rawData[rawHeaders[j]] = values[j].trim()
+        }
+      }
+      
       symbols.push({
         symbol,
         isin: indices.isin >= 0 ? values[indices.isin]?.trim() || undefined : undefined,
@@ -236,6 +245,7 @@ function parseCboeSymbolCsv(csvData: string, venue: string): SymbolRecord[] {
         mic: indices.mic >= 0 ? values[indices.mic]?.trim() || undefined : undefined,
         segment: indices.segment >= 0 ? values[indices.segment]?.trim() || undefined : undefined,
         tick_table: indices.tickTable >= 0 ? values[indices.tickTable]?.trim() || undefined : undefined,
+        raw_data: rawData,
       })
     }
     

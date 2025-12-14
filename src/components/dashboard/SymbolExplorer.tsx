@@ -7,19 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Loader2, Search, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { useSymbology } from "@/hooks/useSymbology";
-
-interface Symbol {
-  id: string;
-  symbol: string;
-  isin: string | null;
-  name: string | null;
-  venue: string;
-  currency: string | null;
-  source: string;
-  mic: string | null;
-  segment: string | null;
-}
+import { useSymbology, Symbol } from "@/hooks/useSymbology";
 
 export function SymbolExplorer() {
   const { symbols, venues, isLoading } = useSymbology();
@@ -168,7 +156,7 @@ export function SymbolExplorer() {
       </Card>
 
       <Dialog open={!!selectedSymbol} onOpenChange={() => setSelectedSymbol(null)}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <span className="font-mono">{selectedSymbol?.symbol}</span>
@@ -181,36 +169,53 @@ export function SymbolExplorer() {
           </DialogHeader>
           {selectedSymbol && (
             <div className="space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Symbol</p>
-                  <p className="font-mono font-medium">{selectedSymbol.symbol}</p>
+              {/* Show all raw_data fields if available */}
+              {selectedSymbol.raw_data && Object.keys(selectedSymbol.raw_data).length > 0 ? (
+                <div className="grid grid-cols-2 gap-3">
+                  {Object.entries(selectedSymbol.raw_data).map(([key, value]) => (
+                    <div key={key} className={String(value).length > 30 ? "col-span-2" : ""}>
+                      <p className="text-xs text-muted-foreground uppercase tracking-wide">{key}</p>
+                      <p className="font-mono text-sm break-all">{String(value) || "-"}</p>
+                    </div>
+                  ))}
                 </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">ISIN</p>
-                  <p className="font-mono">{selectedSymbol.isin || "-"}</p>
+              ) : (
+                /* Fallback to structured fields if no raw_data */
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Symbol</p>
+                    <p className="font-mono font-medium">{selectedSymbol.symbol}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">ISIN</p>
+                    <p className="font-mono">{selectedSymbol.isin || "-"}</p>
+                  </div>
+                  <div className="col-span-2">
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Name</p>
+                    <p>{selectedSymbol.name || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">MIC</p>
+                    <Badge variant="outline">{selectedSymbol.mic || "-"}</Badge>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Currency</p>
+                    <p>{selectedSymbol.currency || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Segment</p>
+                    <p>{selectedSymbol.segment || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Tick Table</p>
+                    <p>{selectedSymbol.tick_table || "-"}</p>
+                  </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide">Data Source</p>
+                    <Badge variant="secondary">{selectedSymbol.source} {selectedSymbol.venue}</Badge>
+                  </div>
                 </div>
-                <div className="col-span-2">
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Name</p>
-                  <p>{selectedSymbol.name || "-"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">MIC</p>
-                  <Badge variant="outline">{selectedSymbol.mic || "-"}</Badge>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Currency</p>
-                  <p>{selectedSymbol.currency || "-"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Segment</p>
-                  <p>{selectedSymbol.segment || "-"}</p>
-                </div>
-                <div>
-                  <p className="text-xs text-muted-foreground uppercase tracking-wide">Data Source</p>
-                  <Badge variant="secondary">{selectedSymbol.source} {selectedSymbol.venue}</Badge>
-                </div>
-              </div>
+              )}
             </div>
           )}
         </DialogContent>
