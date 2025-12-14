@@ -5,6 +5,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Loader2 } from "lucide-react";
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import { format } from "date-fns";
+import { useSymbology } from "@/hooks/useSymbology";
 
 interface ChartDataPoint {
   bucket: string;
@@ -15,32 +16,11 @@ interface ChartDataPoint {
   volume: number;
 }
 
-interface LatestPrice {
-  trade_symbol: string;
-  trade_venue: string;
-  trade_price: number;
-  trade_timestamp: string;
-}
-
 export function PriceChart() {
   const [chartData, setChartData] = useState<ChartDataPoint[]>([]);
-  const [symbols, setSymbols] = useState<string[]>([]);
   const [selectedSymbol, setSelectedSymbol] = useState<string>("");
-  const [isLoading, setIsLoading] = useState(true);
-
-  const fetchSymbols = async () => {
-    const { data, error } = await supabase.rpc("get_latest_prices");
-    
-    if (!error && data) {
-      const prices = data as LatestPrice[];
-      const uniqueSymbols = [...new Set(prices.map((p) => p.trade_symbol))];
-      setSymbols(uniqueSymbols);
-      if (uniqueSymbols.length > 0 && !selectedSymbol) {
-        setSelectedSymbol(uniqueSymbols[0]);
-      }
-    }
-    setIsLoading(false);
-  };
+  const [isLoading, setIsLoading] = useState(false);
+  const { uniqueSymbolNames: symbols, isLoading: symbolsLoading } = useSymbology();
 
   const fetchChartData = async () => {
     if (!selectedSymbol) return;
@@ -57,8 +37,10 @@ export function PriceChart() {
   };
 
   useEffect(() => {
-    fetchSymbols();
-  }, []);
+    if (symbols.length > 0 && !selectedSymbol) {
+      setSelectedSymbol(symbols[0]);
+    }
+  }, [symbols, selectedSymbol]);
 
   useEffect(() => {
     if (selectedSymbol) {
@@ -101,7 +83,7 @@ export function PriceChart() {
         </div>
       </CardHeader>
       <CardContent>
-        {isLoading ? (
+        {isLoading || symbolsLoading ? (
           <div className="flex items-center justify-center h-[300px]">
             <Loader2 className="h-6 w-6 animate-spin text-primary" />
           </div>
