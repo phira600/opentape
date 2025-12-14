@@ -21,7 +21,8 @@ export function SymbolExplorer() {
         s.symbol.toLowerCase().includes(symbolFilter.toLowerCase()) ||
         s.name?.toLowerCase().includes(symbolFilter.toLowerCase()) ||
         s.isin?.toLowerCase().includes(symbolFilter.toLowerCase());
-      const matchesVenue = venueFilter === "all" || s.venue === venueFilter;
+      // Filter by MIC (market identifier code) instead of venue
+      const matchesVenue = venueFilter === "all" || s.mic === venueFilter;
       return matchesSymbol && matchesVenue;
     });
   }, [symbols, symbolFilter, venueFilter]);
@@ -58,10 +59,10 @@ export function SymbolExplorer() {
             }}
           >
             <SelectTrigger className="w-full sm:w-[180px]">
-              <SelectValue placeholder="All Venues" />
+              <SelectValue placeholder="All MICs" />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="all">All Venues</SelectItem>
+              <SelectItem value="all">All MICs</SelectItem>
               {venues.map((venue) => (
                 <SelectItem key={venue} value={venue}>
                   {venue}
@@ -89,9 +90,9 @@ export function SymbolExplorer() {
                     <TableHead>Symbol</TableHead>
                     <TableHead>Name</TableHead>
                     <TableHead>ISIN</TableHead>
-                    <TableHead>Venue</TableHead>
-                    <TableHead>Currency</TableHead>
                     <TableHead>MIC</TableHead>
+                    <TableHead>Currency</TableHead>
+                    <TableHead>Data Source</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -107,13 +108,13 @@ export function SymbolExplorer() {
                         {sym.isin || "-"}
                       </TableCell>
                       <TableCell>
-                        <Badge variant="outline">{sym.venue}</Badge>
+                        <Badge variant="outline">{sym.mic || "-"}</Badge>
                       </TableCell>
                       <TableCell>
                         {sym.currency || "-"}
                       </TableCell>
-                      <TableCell className="text-muted-foreground text-sm">
-                        {sym.mic || "-"}
+                      <TableCell>
+                        <Badge variant="secondary">{sym.source} {sym.venue}</Badge>
                       </TableCell>
                     </TableRow>
                   ))}
