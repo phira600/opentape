@@ -126,6 +126,54 @@ export type Database = {
           },
         ]
       }
+      symbology: {
+        Row: {
+          created_at: string
+          currency: string | null
+          id: string
+          isin: string | null
+          mic: string | null
+          name: string | null
+          raw_data: Json | null
+          segment: string | null
+          source: string
+          symbol: string
+          tick_table: string | null
+          updated_at: string
+          venue: string
+        }
+        Insert: {
+          created_at?: string
+          currency?: string | null
+          id?: string
+          isin?: string | null
+          mic?: string | null
+          name?: string | null
+          raw_data?: Json | null
+          segment?: string | null
+          source: string
+          symbol: string
+          tick_table?: string | null
+          updated_at?: string
+          venue: string
+        }
+        Update: {
+          created_at?: string
+          currency?: string | null
+          id?: string
+          isin?: string | null
+          mic?: string | null
+          name?: string | null
+          raw_data?: Json | null
+          segment?: string | null
+          source?: string
+          symbol?: string
+          tick_table?: string | null
+          updated_at?: string
+          venue?: string
+        }
+        Relationships: []
+      }
       trades_normalized: {
         Row: {
           created_at: string

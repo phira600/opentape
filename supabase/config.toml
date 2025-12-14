@@ -5,3 +5,9 @@ verify_jwt = false
 
 [functions.cleanup-old-trades]
 verify_jwt = false
+
+[functions.fetch-symbology]
+verify_jwt = false
+
+[functions.query-symbology]
+verify_jwt = false
