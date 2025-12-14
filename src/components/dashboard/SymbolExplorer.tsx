@@ -1,4 +1,5 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useCallback } from "react";
+import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
@@ -6,34 +7,86 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Loader2, Search, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { useSymbology, Symbol } from "@/hooks/useSymbology";
+import { Loader2, Search, ChevronLeft, ChevronRight } from "lucide-react";
+import type { Json } from "@/integrations/supabase/types";
+
+interface Symbol {
+  id: string;
+  symbol: string;
+  isin: string | null;
+  name: string | null;
+  venue: string;
+  currency: string | null;
+  source: string;
+  mic: string | null;
+  segment: string | null;
+  tick_table: string | null;
+  raw_data: Json | null;
+}
 
 export function SymbolExplorer() {
-  const { symbols, venues, isLoading } = useSymbology();
+  const [symbols, setSymbols] = useState<Symbol[]>([]);
+  const [venues, setVenues] = useState<string[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
   const [symbolFilter, setSymbolFilter] = useState("");
   const [venueFilter, setVenueFilter] = useState("all");
   const [page, setPage] = useState(0);
   const [selectedSymbol, setSelectedSymbol] = useState<Symbol | null>(null);
+  const [totalCount, setTotalCount] = useState(0);
   const pageSize = 20;
 
-  const filteredSymbols = useMemo(() => {
-    return symbols.filter((s) => {
-      const matchesSymbol = !symbolFilter || 
-        s.symbol.toLowerCase().includes(symbolFilter.toLowerCase()) ||
-        s.name?.toLowerCase().includes(symbolFilter.toLowerCase()) ||
-        s.isin?.toLowerCase().includes(symbolFilter.toLowerCase());
-      const matchesVenue = venueFilter === "all" || s.mic === venueFilter;
-      return matchesSymbol && matchesVenue;
-    });
-  }, [symbols, symbolFilter, venueFilter]);
+  // Fetch venues once on mount
+  useEffect(() => {
+    const fetchVenues = async () => {
+      const { data } = await supabase
+        .from("symbology")
+        .select("mic")
+        .not("mic", "is", null);
+      
+      if (data) {
+        const uniqueVenues = [...new Set(data.map((d) => d.mic).filter(Boolean))] as string[];
+        setVenues(uniqueVenues.sort());
+      }
+    };
+    fetchVenues();
+  }, []);
 
-  const paginatedSymbols = useMemo(() => {
-    const start = page * pageSize;
-    return filteredSymbols.slice(start, start + pageSize);
-  }, [filteredSymbols, page]);
+  // Backend search with debounce
+  const fetchSymbols = useCallback(async () => {
+    setIsLoading(true);
 
-  const totalPages = Math.ceil(filteredSymbols.length / pageSize);
+    let query = supabase
+      .from("symbology")
+      .select("id, symbol, isin, name, venue, currency, source, mic, segment, tick_table, raw_data", { count: "exact" });
+
+    if (symbolFilter) {
+      query = query.or(`symbol.ilike.%${symbolFilter}%,name.ilike.%${symbolFilter}%,isin.ilike.%${symbolFilter}%`);
+    }
+    if (venueFilter !== "all") {
+      query = query.eq("mic", venueFilter);
+    }
+
+    query = query
+      .order("symbol", { ascending: true })
+      .range(page * pageSize, (page + 1) * pageSize - 1);
+
+    const { data, error, count } = await query;
+
+    if (!error && data) {
+      setSymbols(data);
+      setTotalCount(count || 0);
+    }
+    setIsLoading(false);
+  }, [symbolFilter, venueFilter, page]);
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      fetchSymbols();
+    }, 300);
+    return () => clearTimeout(timer);
+  }, [fetchSymbols]);
+
+  const totalPages = Math.ceil(totalCount / pageSize);
 
   return (
     <>
@@ -79,7 +132,7 @@ export function SymbolExplorer() {
             <div className="flex items-center justify-center py-12">
               <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
-          ) : filteredSymbols.length === 0 ? (
+          ) : symbols.length === 0 ? (
             <p className="text-muted-foreground text-center py-12">
               No symbols found. Run the symbology fetch to populate data.
             </p>
@@ -98,7 +151,7 @@ export function SymbolExplorer() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {paginatedSymbols.map((sym) => (
+                    {symbols.map((sym) => (
                       <TableRow 
                         key={sym.id} 
                         className="cursor-pointer hover:bg-muted/50"
@@ -129,7 +182,7 @@ export function SymbolExplorer() {
               </div>
               <div className="flex items-center justify-between mt-4">
                 <p className="text-sm text-muted-foreground">
-                  Page {page + 1} of {totalPages} ({filteredSymbols.length} symbols)
+                  Page {page + 1} of {totalPages} ({totalCount} symbols)
                 </p>
                 <div className="flex gap-2">
                   <Button
@@ -169,7 +222,6 @@ export function SymbolExplorer() {
           </DialogHeader>
           {selectedSymbol && (
             <div className="space-y-4">
-              {/* Show all raw_data fields if available */}
               {selectedSymbol.raw_data && Object.keys(selectedSymbol.raw_data).length > 0 ? (
                 <div className="grid grid-cols-2 gap-3">
                   {Object.entries(selectedSymbol.raw_data).map(([key, value]) => (
@@ -180,7 +232,6 @@ export function SymbolExplorer() {
                   ))}
                 </div>
               ) : (
-                /* Fallback to structured fields if no raw_data */
                 <div className="grid grid-cols-2 gap-4">
                   <div>
                     <p className="text-xs text-muted-foreground uppercase tracking-wide">Symbol</p>
