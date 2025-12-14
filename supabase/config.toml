@@ -1,0 +1,7 @@
+project_id = "skexlbkhxhoeyghquvux"
+
+[functions.fetch-trade-files]
+verify_jwt = false
+
+[functions.cleanup-old-trades]
+verify_jwt = false
