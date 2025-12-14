@@ -25,12 +25,13 @@ export function useSymbology() {
       .from("symbology")
       .select("id, symbol, isin, name, venue, currency, source, mic, segment")
       .order("symbol", { ascending: true })
-      .limit(5000);
+      .limit(50000);
 
     if (!error && data) {
       setSymbols(data);
       const uniqueNames = [...new Set(data.map((s) => s.symbol))].sort();
-      const uniqueVenues = [...new Set(data.map((s) => s.venue))].sort();
+      // Use MIC as the venue for filtering
+      const uniqueVenues = [...new Set(data.map((s) => s.mic).filter(Boolean))].sort() as string[];
       setUniqueSymbolNames(uniqueNames);
       setVenues(uniqueVenues);
     }
