@@ -18,8 +18,8 @@ interface SymbolRecord {
   raw_data?: Record<string, unknown>
 }
 
-// CBOE Europe TRF (Trade Reporting Facility) symbol listing URL
-const CBOE_TRF_URL = 'https://www.batstrading.co.uk/trf/market_data/symbol_listing/csv/'
+// CBOE Europe SIS (Systematic Internaliser Service) symbol listing URL
+const CBOE_SIS_URL = 'https://www.batstrading.co.uk/sis/market_data/symbol_listing/csv/'
 
 // Check if current time is within European market hours (Mon-Fri, 07:00-23:00 CET)
 function isWithinMarketHours(): { withinHours: boolean; reason?: string } {
@@ -83,9 +83,9 @@ Deno.serve(async (req) => {
       }
     }
     
-    console.log(`Fetching CBOE TRF symbology from: ${CBOE_TRF_URL}`)
+    console.log(`Fetching CBOE SIS symbology from: ${CBOE_SIS_URL}`)
     
-    const response = await fetch(CBOE_TRF_URL, {
+    const response = await fetch(CBOE_SIS_URL, {
       headers: {
         'Accept': 'text/csv, */*',
         'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
@@ -93,13 +93,13 @@ Deno.serve(async (req) => {
     })
     
     if (!response.ok) {
-      const errorMsg = `Failed to fetch TRF symbols: HTTP ${response.status}`
+      const errorMsg = `Failed to fetch SIS symbols: HTTP ${response.status}`
       console.error(errorMsg)
       
       await supabase.from('activity_logs').insert({
         log_type: 'error',
         message: errorMsg,
-        details: { source: 'CBOE_TRF', status: response.status }
+        details: { source: 'CBOE_SIS', status: response.status }
       })
       
       return new Response(
@@ -109,15 +109,15 @@ Deno.serve(async (req) => {
     }
     
     const csvData = await response.text()
-    const symbols = parseCboeSymbolCsv(csvData, 'TRF')
+    const symbols = parseCboeSymbolCsv(csvData, 'SIS')
     
     if (symbols.length === 0) {
-      console.log('No symbols found in TRF data')
+      console.log('No symbols found in SIS data')
       
       await supabase.from('activity_logs').insert({
         log_type: 'warning',
-        message: 'No symbols found in CBOE TRF data',
-        details: { source: 'CBOE_TRF' }
+        message: 'No symbols found in CBOE SIS data',
+        details: { source: 'CBOE_SIS' }
       })
       
       return new Response(
@@ -149,14 +149,14 @@ Deno.serve(async (req) => {
       }
     }
     
-    console.log(`Upserted ${upsertedCount} TRF symbols`)
+    console.log(`Upserted ${upsertedCount} SIS symbols`)
     
     await supabase.from('activity_logs').insert({
       log_type: 'info',
-      message: `CBOE TRF symbology fetch completed: ${upsertedCount} symbols`,
+      message: `CBOE SIS symbology fetch completed: ${upsertedCount} symbols`,
       details: { 
-        source: 'CBOE_TRF', 
-        venue: 'TRF',
+        source: 'CBOE_SIS', 
+        venue: 'SIS',
         count: upsertedCount,
         errors: errorCount
       }
@@ -165,7 +165,7 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true, 
-        venue: 'TRF',
+        venue: 'SIS',
         count: upsertedCount,
         errors: errorCount
       }),
@@ -183,34 +183,44 @@ Deno.serve(async (req) => {
   }
 })
 
-// Parse CBOE symbol listing CSV
-// Expected columns: Symbol,ISIN,Name,Currency,MIC,Segment,TickTable,...
+// Parse CBOE SIS symbol listing CSV
+// First line is metadata: environment=PROD,created=2025-12-12,time=15:36Z,warning=
+// Headers on line 2: company_name,bats_name,isin,currency,mic,reuters_exchange_code,...
 function parseCboeSymbolCsv(csvData: string, venue: string): SymbolRecord[] {
   const symbols: SymbolRecord[] = []
   
   try {
     const lines = csvData.split('\n').filter(line => line.trim())
     
-    if (lines.length < 2) {
-      console.log('No data lines in symbol CSV')
+    if (lines.length < 3) {
+      console.log('Not enough lines in symbol CSV (need metadata + headers + data)')
       return symbols
     }
     
-    // Parse headers
-    const headers = lines[0].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'))
+    // Skip first line (metadata) and use second line as headers
+    const metadataLine = lines[0]
+    console.log(`Metadata line: ${metadataLine.substring(0, 100)}`)
+    
+    // Parse headers from line 2 (index 1)
+    const headers = lines[1].split(',').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'))
     console.log(`Symbol CSV headers: ${headers.slice(0, 10).join(', ')}`)
     
     const indices = {
-      symbol: headers.findIndex(h => h === 'symbol' || h === 'ticker'),
+      // bats_name is the symbol/ticker
+      symbol: headers.findIndex(h => h === 'bats_name' || h === 'symbol' || h === 'ticker'),
       isin: headers.findIndex(h => h === 'isin'),
-      name: headers.findIndex(h => h === 'name' || h === 'company' || h === 'security_name'),
+      // company_name is the name
+      name: headers.findIndex(h => h === 'company_name' || h === 'name' || h === 'company' || h === 'security_name'),
       currency: headers.findIndex(h => h === 'currency' || h === 'ccy'),
       mic: headers.findIndex(h => h === 'mic' || h === 'market'),
-      segment: headers.findIndex(h => h === 'segment' || h === 'market_segment'),
-      tickTable: headers.findIndex(h => h === 'tick_table' || h === 'ticktable'),
+      segment: headers.findIndex(h => h === 'trading_segment' || h === 'segment' || h === 'market_segment'),
+      tickTable: headers.findIndex(h => h === 'tick_type' || h === 'tick_table' || h === 'ticktable'),
     }
     
-    for (let i = 1; i < lines.length; i++) {
+    console.log(`Column indices - symbol: ${indices.symbol}, isin: ${indices.isin}, name: ${indices.name}, currency: ${indices.currency}, mic: ${indices.mic}`)
+    
+    // Start from line 3 (index 2) for data rows
+    for (let i = 2; i < lines.length; i++) {
       const values = parseCSVLine(lines[i])
       
       const symbol = indices.symbol >= 0 ? values[indices.symbol]?.trim() : ''
