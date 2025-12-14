@@ -18,11 +18,33 @@ interface SymbolRecord {
   raw_data?: Record<string, unknown>
 }
 
-// CBOE Europe venues and their symbol listing URLs
-const CBOE_VENUES = {
-  bxe: 'https://www.batstrading.co.uk/bxe/market_data/symbol_listing/csv/',
-  cxe: 'https://www.batstrading.co.uk/cxe/market_data/symbol_listing/csv/',
-  dxe: 'https://www.batstrading.co.uk/dxe/market_data/symbol_listing/csv/',
+// CBOE Europe TRF (Trade Reporting Facility) symbol listing URL
+const CBOE_TRF_URL = 'https://www.batstrading.co.uk/trf/market_data/symbol_listing/csv/'
+
+// Check if current time is within European market hours (Mon-Fri, 07:00-23:00 CET)
+function isWithinMarketHours(): { withinHours: boolean; reason?: string } {
+  const now = new Date()
+  
+  // Get current time in CET/CEST (Europe/Helsinki is EET, use Berlin for CET)
+  const cetTime = new Date(now.toLocaleString('en-US', { timeZone: 'Europe/Berlin' }))
+  const dayOfWeek = cetTime.getDay() // 0 = Sunday, 6 = Saturday
+  const hour = cetTime.getHours()
+  
+  // Weekend check (Saturday = 6, Sunday = 0)
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    return { withinHours: false, reason: `Weekend (${dayOfWeek === 0 ? 'Sunday' : 'Saturday'}) - no files published` }
+  }
+  
+  // Market hours: 07:00 CET (Helsinki opens early) to 23:00 CET
+  if (hour < 7) {
+    return { withinHours: false, reason: `Before market open (${hour}:00 CET, opens at 07:00 CET)` }
+  }
+  
+  if (hour >= 23) {
+    return { withinHours: false, reason: `After market close (${hour}:00 CET, closes at 23:00 CET)` }
+  }
+  
+  return { withinHours: true }
 }
 
 Deno.serve(async (req) => {
@@ -35,87 +57,118 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
-    const { source, venue } = await req.json().catch(() => ({ source: 'cboe', venue: 'all' }))
+    const body = await req.json().catch(() => ({}))
+    const forceRun = body.force === true
     
-    console.log(`Fetching symbology from source: ${source}, venue: ${venue}`)
-    
-    const results: { venue: string; count: number; status: string }[] = []
-    
-    if (source === 'cboe' || source === 'all') {
-      const venuesToFetch = venue === 'all' 
-        ? Object.keys(CBOE_VENUES) 
-        : [venue]
-      
-      for (const v of venuesToFetch) {
-        const url = CBOE_VENUES[v as keyof typeof CBOE_VENUES]
-        if (!url) {
-          results.push({ venue: v, count: 0, status: 'invalid venue' })
-          continue
-        }
+    // Check market hours unless force flag is set
+    if (!forceRun) {
+      const marketCheck = isWithinMarketHours()
+      if (!marketCheck.withinHours) {
+        console.log(`Skipping fetch: ${marketCheck.reason}`)
         
-        try {
-          console.log(`Fetching CBOE symbols from: ${url}`)
-          const response = await fetch(url, {
-            headers: {
-              'Accept': 'text/csv, */*',
-              'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
-            }
-          })
-          
-          if (!response.ok) {
-            console.error(`Failed to fetch ${v}: ${response.status}`)
-            results.push({ venue: v, count: 0, status: `HTTP ${response.status}` })
-            continue
-          }
-          
-          const csvData = await response.text()
-          const symbols = parseCboeSymbolCsv(csvData, v.toUpperCase())
-          
-          if (symbols.length === 0) {
-            results.push({ venue: v, count: 0, status: 'no symbols found' })
-            continue
-          }
-          
-          // Upsert symbols in batches
-          const batchSize = 500
-          let upsertedCount = 0
-          
-          for (let i = 0; i < symbols.length; i += batchSize) {
-            const batch = symbols.slice(i, i + batchSize)
-            
-            const { error } = await supabase
-              .from('symbology')
-              .upsert(batch, { 
-                onConflict: 'symbol,venue,source',
-                ignoreDuplicates: false 
-              })
-            
-            if (error) {
-              console.error(`Upsert error for ${v}: ${error.message}`)
-            } else {
-              upsertedCount += batch.length
-            }
-          }
-          
-          console.log(`Upserted ${upsertedCount} symbols for ${v}`)
-          results.push({ venue: v, count: upsertedCount, status: 'success' })
-          
-        } catch (e) {
-          console.error(`Error fetching ${v}: ${e}`)
-          results.push({ venue: v, count: 0, status: `error: ${e}` })
-        }
+        await supabase.from('activity_logs').insert({
+          log_type: 'info',
+          message: `Symbology fetch skipped: ${marketCheck.reason}`,
+          details: { source: 'CBOE_TRF', skipped: true }
+        })
+        
+        return new Response(
+          JSON.stringify({ 
+            success: true, 
+            skipped: true, 
+            reason: marketCheck.reason 
+          }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
       }
     }
     
-    // Log activity
+    console.log(`Fetching CBOE TRF symbology from: ${CBOE_TRF_URL}`)
+    
+    const response = await fetch(CBOE_TRF_URL, {
+      headers: {
+        'Accept': 'text/csv, */*',
+        'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+      }
+    })
+    
+    if (!response.ok) {
+      const errorMsg = `Failed to fetch TRF symbols: HTTP ${response.status}`
+      console.error(errorMsg)
+      
+      await supabase.from('activity_logs').insert({
+        log_type: 'error',
+        message: errorMsg,
+        details: { source: 'CBOE_TRF', status: response.status }
+      })
+      
+      return new Response(
+        JSON.stringify({ success: false, error: errorMsg }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    
+    const csvData = await response.text()
+    const symbols = parseCboeSymbolCsv(csvData, 'TRF')
+    
+    if (symbols.length === 0) {
+      console.log('No symbols found in TRF data')
+      
+      await supabase.from('activity_logs').insert({
+        log_type: 'warning',
+        message: 'No symbols found in CBOE TRF data',
+        details: { source: 'CBOE_TRF' }
+      })
+      
+      return new Response(
+        JSON.stringify({ success: true, count: 0, message: 'No symbols found' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+    
+    // Upsert symbols in batches
+    const batchSize = 500
+    let upsertedCount = 0
+    let errorCount = 0
+    
+    for (let i = 0; i < symbols.length; i += batchSize) {
+      const batch = symbols.slice(i, i + batchSize)
+      
+      const { error } = await supabase
+        .from('symbology')
+        .upsert(batch, { 
+          onConflict: 'symbol,venue,source',
+          ignoreDuplicates: false 
+        })
+      
+      if (error) {
+        console.error(`Upsert error: ${error.message}`)
+        errorCount++
+      } else {
+        upsertedCount += batch.length
+      }
+    }
+    
+    console.log(`Upserted ${upsertedCount} TRF symbols`)
+    
     await supabase.from('activity_logs').insert({
       log_type: 'info',
-      message: `Symbology fetch completed`,
-      details: { source, results }
+      message: `CBOE TRF symbology fetch completed: ${upsertedCount} symbols`,
+      details: { 
+        source: 'CBOE_TRF', 
+        venue: 'TRF',
+        count: upsertedCount,
+        errors: errorCount
+      }
     })
     
     return new Response(
-      JSON.stringify({ success: true, results }),
+      JSON.stringify({ 
+        success: true, 
+        venue: 'TRF',
+        count: upsertedCount,
+        errors: errorCount
+      }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
     
