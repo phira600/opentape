@@ -11,6 +11,13 @@ interface JobConfiguration {
   source_url: string
   source_type: 'cboe' | 'nasdaq' | 'lseg' | 'custom'
   is_enabled: boolean
+  last_run_at: string | null
+}
+
+interface FetchedFile {
+  data: string
+  url: string
+  fileName: string
 }
 
 interface TradeRecord {
@@ -81,24 +88,19 @@ Deno.serve(async (req) => {
           details: { source_url: job.source_url }
         })
 
-        let rawData: string
-        let actualUrl: string
-        let fileName: string
-
+        // Fetch all files since last run
+        const files: FetchedFile[] = []
+        
         if (job.source_type === 'cboe') {
-          // CBOE has dynamic URLs based on venue and time
-          const cboeResult = await fetchCboeData(job.source_url)
-          rawData = cboeResult.data
-          actualUrl = cboeResult.url
-          fileName = cboeResult.fileName
-          console.log(`Fetched CBOE data from: ${actualUrl}`)
+          // CBOE has dynamic URLs based on venue and time - fetch all since last run
+          const cboeFiles = await fetchCboeDataSinceLastRun(job.source_url, job.last_run_at)
+          files.push(...cboeFiles)
+          console.log(`Fetched ${cboeFiles.length} CBOE files`)
         } else if (job.source_type === 'nasdaq') {
-          // Nasdaq Nordic has dynamic URLs based on time
-          const nasdaqResult = await fetchNasdaqData(job.source_url)
-          rawData = nasdaqResult.data
-          actualUrl = nasdaqResult.url
-          fileName = nasdaqResult.fileName
-          console.log(`Fetched Nasdaq data from: ${actualUrl}`)
+          // Nasdaq Nordic has dynamic URLs based on time - fetch all since last run
+          const nasdaqFiles = await fetchNasdaqDataSinceLastRun(job.source_url, job.last_run_at)
+          files.push(...nasdaqFiles)
+          console.log(`Fetched ${nasdaqFiles.length} Nasdaq files`)
         } else {
           // Standard fetch for other sources
           const response = await fetch(job.source_url, {
@@ -109,32 +111,19 @@ Deno.serve(async (req) => {
             throw new Error(`HTTP ${response.status}: ${response.statusText}`)
           }
 
-          rawData = await response.text()
-          actualUrl = job.source_url
-          fileName = `fetch_${new Date().toISOString()}`
+          files.push({
+            data: await response.text(),
+            url: job.source_url,
+            fileName: `fetch_${new Date().toISOString()}`
+          })
         }
 
-        // Create a hash of the content to detect duplicates
-        const encoder = new TextEncoder()
-        const data = encoder.encode(rawData)
-        const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-        const hashArray = Array.from(new Uint8Array(hashBuffer))
-        const fileHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-
-        // Check if we've already processed this exact content
-        const { data: existingFile } = await supabase
-          .from('processed_files')
-          .select('id')
-          .eq('job_id', job.id)
-          .eq('file_hash', fileHash)
-          .single()
-
-        if (existingFile) {
-          console.log(`Skipping duplicate content for job ${job.name}`)
+        if (files.length === 0) {
+          console.log(`No files found for job ${job.name}`)
           await supabase.from('activity_logs').insert({
             job_id: job.id,
             log_type: 'info',
-            message: 'No new data (content unchanged)',
+            message: 'No new files available',
           })
           
           await supabase
@@ -142,76 +131,96 @@ Deno.serve(async (req) => {
             .update({ last_status: 'success' })
             .eq('id', job.id)
 
-          results.push({ job_id: job.id, status: 'skipped', reason: 'duplicate' })
+          results.push({ job_id: job.id, status: 'success', files_count: 0 })
           continue
         }
 
-        // Parse trades based on source type
-        const contentType = ''
-        let trades: TradeRecord[] = []
-        
-        if (job.source_type === 'cboe') {
-          trades = parseCboeData(rawData, job.name)
-        } else if (job.source_type === 'nasdaq') {
-          trades = parseNasdaqData(rawData, job.name)
-        } else if (job.source_type === 'lseg') {
-          trades = parseLsegData(rawData, contentType, job.name)
-        } else {
-          trades = parseGenericData(rawData, contentType, job.name)
-        }
+        let totalInserted = 0
+        let filesProcessed = 0
 
-        if (trades.length === 0) {
-          console.log(`No trades parsed for job ${job.name}`)
-          await supabase.from('activity_logs').insert({
-            job_id: job.id,
-            log_type: 'warning',
-            message: 'No trades found in response',
-          })
-          
-          await supabase
-            .from('job_configurations')
-            .update({ last_status: 'success' })
-            .eq('id', job.id)
+        for (const file of files) {
+          const rawData = file.data
+          const fileName = file.fileName
 
-          results.push({ job_id: job.id, status: 'success', trades_count: 0 })
-          continue
-        }
+          // Create a hash of the content to detect duplicates
+          const encoder = new TextEncoder()
+          const data = encoder.encode(rawData)
+          const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+          const hashArray = Array.from(new Uint8Array(hashBuffer))
+          const fileHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
 
-        // Insert trades in batches
-        const batchSize = 500
-        let insertedCount = 0
+          // Check if we've already processed this exact content
+          const { data: existingFile } = await supabase
+            .from('processed_files')
+            .select('id')
+            .eq('job_id', job.id)
+            .eq('file_hash', fileHash)
+            .single()
 
-        for (let i = 0; i < trades.length; i += batchSize) {
-          const batch = trades.slice(i, i + batchSize).map(trade => ({
-            job_id: job.id,
-            ...trade
-          }))
-
-          const { error: insertError } = await supabase
-            .from('trades_normalized')
-            .insert(batch)
-
-          if (insertError) {
-            console.error(`Batch insert error: ${insertError.message}`)
-          } else {
-            insertedCount += batch.length
+          if (existingFile) {
+            console.log(`Skipping duplicate file: ${fileName}`)
+            continue
           }
-        }
 
-        // Record processed file
-        await supabase.from('processed_files').insert({
-          job_id: job.id,
-          file_name: fileName,
-          file_hash: fileHash,
-          records_count: insertedCount
-        })
+          // Parse trades based on source type
+          const contentType = ''
+          let trades: TradeRecord[] = []
+          
+          if (job.source_type === 'cboe') {
+            trades = parseCboeData(rawData, job.name)
+          } else if (job.source_type === 'nasdaq') {
+            trades = parseNasdaqData(rawData, job.name)
+          } else if (job.source_type === 'lseg') {
+            trades = parseLsegData(rawData, contentType, job.name)
+          } else {
+            trades = parseGenericData(rawData, contentType, job.name)
+          }
+
+          if (trades.length === 0) {
+            console.log(`No trades in file: ${fileName}`)
+            continue
+          }
+
+          // Insert trades in batches
+          const batchSize = 500
+          let insertedCount = 0
+
+          for (let i = 0; i < trades.length; i += batchSize) {
+            const batch = trades.slice(i, i + batchSize).map(trade => ({
+              job_id: job.id,
+              ...trade
+            }))
+
+            const { error: insertError } = await supabase
+              .from('trades_normalized')
+              .insert(batch)
+
+            if (insertError) {
+              console.error(`Batch insert error: ${insertError.message}`)
+            } else {
+              insertedCount += batch.length
+            }
+          }
+
+          // Record processed file
+          await supabase.from('processed_files').insert({
+            job_id: job.id,
+            file_name: fileName,
+            file_hash: fileHash,
+            records_count: insertedCount
+          })
+
+          totalInserted += insertedCount
+          filesProcessed++
+          console.log(`Processed file ${fileName}: ${insertedCount} trades`)
+        }
 
         // Log success
         await supabase.from('activity_logs').insert({
           job_id: job.id,
           log_type: 'success',
-          message: `Processed ${insertedCount} trades`,
-          details: { trades_count: insertedCount, file: fileName }
+          message: `Processed ${filesProcessed} files with ${totalInserted} trades`,
+          details: { files_count: filesProcessed, trades_count: totalInserted }
         })
 
         // Update job status
@@ -220,7 +229,7 @@ Deno.serve(async (req) => {
           .update({ last_status: 'success', last_error: null })
           .eq('id', job.id)
 
-        results.push({ job_id: job.id, status: 'success', trades_count: insertedCount })
+        results.push({ job_id: job.id, status: 'success', files_count: filesProcessed, trades_count: totalInserted })
 
       } catch (jobError) {
         const errorMessage = jobError instanceof Error ? jobError.message : 'Unknown error'
@@ -261,11 +270,12 @@ Deno.serve(async (req) => {
 })
 
 // CBOE URL pattern: https://www.cboe.com/europe/equities/trade_data/
-// Actual files are at: https://cdn.cboe.com/data/europe/equities/trade_data/{hash}/minute/rts13_public_trade_data_{venue}_{date}_{HHMM}.csv
+// Files are at: https://www.cboe.com/europe/equities/trade_data/{venue}/minute/rts13_public_trade_data_{venue}_{date}_{HHMM}.csv
 // Venues: bxe, cxe, dxe, apa
-async function fetchCboeData(sourceUrl: string): Promise<{ data: string; url: string; fileName: string }> {
+async function fetchCboeDataSinceLastRun(sourceUrl: string, lastRunAt: string | null): Promise<FetchedFile[]> {
+  const files: FetchedFile[] = []
+  
   // Parse venue from source_url - expect format like "cboe:bxe" or just "bxe"
-  // or full URL like https://www.cboe.com/europe/equities/trade_data/
   let venue = 'bxe' // default venue
   
   if (sourceUrl.includes('cboe:')) {
@@ -275,49 +285,69 @@ async function fetchCboeData(sourceUrl: string): Promise<{ data: string; url: st
     if (match) venue = match[1]
   }
 
-  // Get current time minus 5 minutes (data is delayed by 15 min, available per minute for last 5 min)
+  // Determine start time (last run or 1 hour ago if first run)
   const now = new Date()
-  const fetchTime = new Date(now.getTime() - 5 * 60 * 1000)
+  const startTime = lastRunAt 
+    ? new Date(lastRunAt) 
+    : new Date(now.getTime() - 60 * 60 * 1000) // 1 hour ago if first run
   
-  const dateStr = fetchTime.toISOString().split('T')[0] // YYYY-MM-DD
-  const hour = fetchTime.getUTCHours().toString().padStart(2, '0')
-  const minute = fetchTime.getUTCMinutes().toString().padStart(2, '0')
+  // End time is 5 minutes ago (data delay)
+  const endTime = new Date(now.getTime() - 5 * 60 * 1000)
   
-  // Try minute file first, then fall back to hourly
-  const minuteFileName = `rts13_public_trade_data_${venue}_${dateStr}_${hour}${minute}.csv`
-  const hourlyFileName = `rts13_public_trade_data_${venue}_${dateStr}_${hour}.csv`
+  console.log(`CBOE: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
   
-  // The CDN URL pattern - the hash changes daily, so we need to fetch the page to get it
-  // For now, try the direct pattern that works
-  const baseUrls = [
-    `https://www.cboe.com/europe/equities/trade_data/${venue}/minute/${minuteFileName}`,
-    `https://www.cboe.com/europe/equities/trade_data/${venue}/hour/${hourlyFileName}`,
-  ]
+  // Generate all minute timestamps between start and end
+  const currentTime = new Date(startTime)
+  const urlsToTry: { url: string; fileName: string }[] = []
+  
+  while (currentTime <= endTime) {
+    const dateStr = currentTime.toISOString().split('T')[0] // YYYY-MM-DD
+    const hour = currentTime.getUTCHours().toString().padStart(2, '0')
+    const minute = currentTime.getUTCMinutes().toString().padStart(2, '0')
+    
+    const fileName = `rts13_public_trade_data_${venue}_${dateStr}_${hour}${minute}.csv`
+    const url = `https://www.cboe.com/europe/equities/trade_data/${venue}/minute/${fileName}`
+    
+    urlsToTry.push({ url, fileName })
+    
+    // Move to next minute
+    currentTime.setMinutes(currentTime.getMinutes() + 1)
+  }
+  
+  console.log(`CBOE: Trying ${urlsToTry.length} URLs`)
+  
+  // Fetch files in parallel (batch of 5 to avoid overwhelming)
+  for (let i = 0; i < urlsToTry.length; i += 5) {
+    const batch = urlsToTry.slice(i, i + 5)
+    const results = await Promise.allSettled(
+      batch.map(async ({ url, fileName }) => {
+        const response = await fetch(url, {
+          headers: { 
+            'Accept': 'text/csv, */*',
+            'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+          },
+          redirect: 'follow'
+        })
 
-  for (const url of baseUrls) {
-    try {
-      console.log(`Trying CBOE URL: ${url}`)
-      const response = await fetch(url, {
-        headers: { 
-          'Accept': 'text/csv, */*',
-          'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
-        },
-        redirect: 'follow'
-      })
-
-      if (response.ok) {
-        const data = await response.text()
-        if (data && data.includes('Timestamp') && data.includes('Symbol')) {
-          const fileName = url.includes('minute') ? minuteFileName : hourlyFileName
-          return { data, url, fileName }
+        if (response.ok) {
+          const data = await response.text()
+          if (data && data.includes('Timestamp') && data.includes('Symbol')) {
+            return { data, url, fileName }
+          }
         }
+        return null
+      })
+    )
+    
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) {
+        files.push(result.value)
       }
-    } catch (e) {
-      console.log(`Failed to fetch ${url}: ${e}`)
     }
   }
-
-  throw new Error(`Failed to fetch CBOE data for venue ${venue}. Tried minute and hourly files.`)
+  
+  console.log(`CBOE: Found ${files.length} valid files`)
+  return files
 }
 
 // Parse CBOE RTS13 CSV format
@@ -394,51 +424,75 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
 
 // Nasdaq URL pattern: https://tradereports.nasdaq.com/shares/trade-reports/post-trade
 // Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM}.csv
-async function fetchNasdaqData(sourceUrl: string): Promise<{ data: string; url: string; fileName: string }> {
-  // Get current time minus 5 minutes (data may be slightly delayed)
+async function fetchNasdaqDataSinceLastRun(sourceUrl: string, lastRunAt: string | null): Promise<FetchedFile[]> {
+  const files: FetchedFile[] = []
+  
+  // Determine start time (last run or 1 hour ago if first run)
   const now = new Date()
-  const fetchTime = new Date(now.getTime() - 5 * 60 * 1000)
+  const startTime = lastRunAt 
+    ? new Date(lastRunAt) 
+    : new Date(now.getTime() - 60 * 60 * 1000) // 1 hour ago if first run
   
-  const dateStr = fetchTime.toISOString().split('T')[0] // YYYY-MM-DD
-  const hour = fetchTime.getUTCHours().toString().padStart(2, '0')
-  const minute = fetchTime.getUTCMinutes().toString().padStart(2, '0')
+  // End time is 5 minutes ago (data delay)
+  const endTime = new Date(now.getTime() - 5 * 60 * 1000)
   
-  // Try a few different times in case exact minute isn't available
-  const timeVariants = [
-    `${hour}${minute}`,
-    `${hour}${(Math.floor(parseInt(minute) / 5) * 5).toString().padStart(2, '0')}`, // Round to 5-min
-    `${hour}00`, // Start of hour
-  ]
+  console.log(`Nasdaq: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
   
   const baseUrl = 'https://tradereports.nasdaq.com/shares/trade-reports/post-trade'
   
-  for (const time of timeVariants) {
-    const fileName = `NordicEquity-posttrade-${dateStr}T${time}.csv`
+  // Generate all minute timestamps between start and end
+  const currentTime = new Date(startTime)
+  const urlsToTry: { url: string; fileName: string }[] = []
+  
+  while (currentTime <= endTime) {
+    const dateStr = currentTime.toISOString().split('T')[0] // YYYY-MM-DD
+    const hour = currentTime.getUTCHours().toString().padStart(2, '0')
+    const minute = currentTime.getUTCMinutes().toString().padStart(2, '0')
+    
+    const fileName = `NordicEquity-posttrade-${dateStr}T${hour}${minute}.csv`
     const url = `${baseUrl}/${fileName}`
     
-    try {
-      console.log(`Trying Nasdaq URL: ${url}`)
-      const response = await fetch(url, {
-        headers: { 
-          'Accept': 'text/csv, */*',
-          'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
-        },
-        redirect: 'follow'
-      })
+    urlsToTry.push({ url, fileName })
+    
+    // Move to next minute
+    currentTime.setMinutes(currentTime.getMinutes() + 1)
+  }
+  
+  console.log(`Nasdaq: Trying ${urlsToTry.length} URLs`)
+  
+  // Fetch files in parallel (batch of 5 to avoid overwhelming)
+  for (let i = 0; i < urlsToTry.length; i += 5) {
+    const batch = urlsToTry.slice(i, i + 5)
+    const results = await Promise.allSettled(
+      batch.map(async ({ url, fileName }) => {
+        const response = await fetch(url, {
+          headers: { 
+            'Accept': 'text/csv, */*',
+            'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+          },
+          redirect: 'follow'
+        })
 
-      if (response.ok) {
-        const data = await response.text()
-        // Nasdaq files start with "sep=;" indicator
-        if (data && (data.includes('sep=;') || data.includes('Trading date and time'))) {
-          return { data, url, fileName }
+        if (response.ok) {
+          const data = await response.text()
+          // Nasdaq files start with "sep=;" indicator
+          if (data && (data.includes('sep=;') || data.includes('Trading date and time'))) {
+            return { data, url, fileName }
+          }
         }
+        return null
+      })
+    )
+    
+    for (const result of results) {
+      if (result.status === 'fulfilled' && result.value) {
+        files.push(result.value)
       }
-    } catch (e) {
-      console.log(`Failed to fetch ${url}: ${e}`)
     }
   }
-
-  throw new Error(`Failed to fetch Nasdaq data. Tried multiple time variants for ${dateStr}.`)
+  
+  console.log(`Nasdaq: Found ${files.length} valid files`)
+  return files
 }
 
 // Parse Nasdaq Nordic CSV format (semicolon-separated)
