@@ -108,6 +108,12 @@ export function ActivityLog() {
                       )}
                     </div>
                     <p className="text-sm">{log.message}</p>
+                    {log.details && (log.details as { files?: string[] }).files && (
+                      <p className="text-xs text-muted-foreground mt-1 font-mono truncate">
+                        {((log.details as { files?: string[] }).files || []).slice(0, 3).join(', ')}
+                        {((log.details as { files?: string[] }).files || []).length > 3 && '...'}
+                      </p>
+                    )}
                     <p className="text-xs text-muted-foreground mt-1">
                       {formatDistanceToNow(new Date(log.created_at), {
                         addSuffix: true,

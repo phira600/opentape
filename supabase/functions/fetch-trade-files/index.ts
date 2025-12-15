@@ -232,12 +232,18 @@ Deno.serve(async (req) => {
           console.log(`Processed file ${fileName}: ${insertedCount} trades`)
         }
 
+        // Collect processed filenames for logging
+        const processedFileNames = files.filter((_, i) => i < filesProcessed).map(f => f.fileName).slice(0, 10)
+        const fileListSummary = processedFileNames.length > 0 
+          ? `Files: ${processedFileNames.join(', ')}${filesProcessed > 10 ? ` (+${filesProcessed - 10} more)` : ''}`
+          : ''
+
         // Log success
         await supabase.from('activity_logs').insert({
           job_id: job.id,
           log_type: 'success',
           message: `Processed ${filesProcessed} files with ${totalInserted} trades`,
-          details: { files_count: filesProcessed, trades_count: totalInserted }
+          details: { files_count: filesProcessed, trades_count: totalInserted, files: processedFileNames }
         })
 
         // Update job status
@@ -454,7 +460,7 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
 }
 
 // Nasdaq URL pattern: https://tradereports.nasdaq.com/shares/trade-reports/post-trade
-// Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM}.csv
+// Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM} (no extension)
 async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
@@ -491,7 +497,8 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
     const hour = currentTime.getUTCHours().toString().padStart(2, '0')
     const minute = currentTime.getUTCMinutes().toString().padStart(2, '0')
     
-    const fileName = `NordicEquity-posttrade-${dateStr}T${hour}${minute}.csv`
+    // Nasdaq files have NO extension
+    const fileName = `NordicEquity-posttrade-${dateStr}T${hour}${minute}`
     const url = `${baseUrl}/${fileName}`
     
     urlsToTry.push({ url, fileName })
