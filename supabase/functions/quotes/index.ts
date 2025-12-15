@@ -45,62 +45,55 @@ serve(async (req) => {
 
     console.log(`Fetching quotes for isins=${isins}, currency=${currency}, venue=${venue}`);
 
-    // Build query for symbology
-    let symbolQuery = supabase
-      .from("symbology")
-      .select("symbol, isin, name, venue, currency, mic");
+    // Parse ISINs list
+    const isinList = isins ? isins.split(",").map((s) => s.trim()) : [];
 
-    // Filter by ISINs if provided (comma-separated list)
-    if (isins) {
-      const isinList = isins.split(",").map((s) => s.trim());
-      symbolQuery = symbolQuery.in("isin", isinList);
-    }
-
-    if (currency) {
-      symbolQuery = symbolQuery.eq("currency", currency);
-    }
-
-    if (venue) {
-      symbolQuery = symbolQuery.eq("venue", venue);
-    }
-
-    const { data: symbols, error: symbolError } = await symbolQuery.limit(100);
-
-    if (symbolError) {
-      console.error("Error fetching symbology:", symbolError);
+    if (isinList.length === 0) {
       return new Response(
-        JSON.stringify({ error: "Failed to fetch symbols", details: symbolError.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
-    }
-
-    if (!symbols || symbols.length === 0) {
-      return new Response(
-        JSON.stringify({ quotes: [], count: 0 }),
+        JSON.stringify({ quotes: [], count: 0, error: "No ISINs provided" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`Found ${symbols.length} symbols`);
+    console.log(`Fetching quotes for ${isinList.length} ISINs`);
 
-    // Get today's data for each symbol
+    // Get today's data using ISIN directly as the symbol (trades store ISIN as symbol)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const startOfDay = today.toISOString();
 
     const quotes: QuoteResult[] = [];
 
-    for (const sym of symbols) {
-      // Get chart data for the symbol
+    for (const isin of isinList) {
+      // Get symbology info for this ISIN (for name lookup)
+      let symInfo: { name: string | null; currency: string | null } = { name: null, currency: null };
+      
+      const { data: symData } = await supabase
+        .from("symbology")
+        .select("name, currency")
+        .eq("isin", isin)
+        .limit(1)
+        .maybeSingle();
+      
+      if (symData) {
+        symInfo = symData;
+      }
+
+      // Skip if currency filter doesn't match
+      if (currency && symInfo.currency && symInfo.currency !== currency) {
+        continue;
+      }
+
+      // Get chart data using ISIN directly as the symbol
       const { data: chartData, error: chartError } = await supabase.rpc("get_chart_data", {
-        p_symbol: sym.symbol,
-        p_venue: sym.venue,
+        p_symbol: isin,
+        p_venue: venue || null,
         p_start_time: startOfDay,
         p_end_time: new Date().toISOString(),
       });
 
       if (chartError) {
-        console.error(`Error fetching data for ${sym.symbol}:`, chartError);
+        console.error(`Error fetching data for ${isin}:`, chartError);
         continue;
       }
 
@@ -117,11 +110,11 @@ serve(async (req) => {
       const lastTimestamp = chartData[chartData.length - 1].bucket;
 
       quotes.push({
-        isin: sym.isin || "",
-        currency: sym.currency || "",
-        symbol: sym.symbol,
-        venue: sym.venue,
-        name: sym.name,
+        isin: isin,
+        currency: symInfo.currency || currency || "",
+        symbol: isin,
+        venue: venue || "ALL",
+        name: symInfo.name,
         last: dayClose,
         high: dayHigh,
         low: dayLow,
