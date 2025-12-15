@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Header } from "@/components/dashboard/Header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -11,6 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Loader2, Play, Copy, Check } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
+import { IntradayChart } from "@/components/dashboard/IntradayChart";
 
 export default function ApiTest() {
   const { toast } = useToast();
@@ -22,6 +23,7 @@ export default function ApiTest() {
   const [intradayInterval, setIntradayInterval] = useState("1");
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayResult, setIntradayResult] = useState<string>("");
+  const [intradayData, setIntradayData] = useState<any>(null);
 
   // Quotes state
   const [quotesIsins, setQuotesIsins] = useState("");
@@ -50,6 +52,7 @@ export default function ApiTest() {
   const handleIntraday = async () => {
     setIntradayLoading(true);
     setIntradayResult("");
+    setIntradayData(null);
 
     try {
       const params: Record<string, string> = {
@@ -64,8 +67,10 @@ export default function ApiTest() {
 
       if (error) throw error;
       setIntradayResult(JSON.stringify(data, null, 2));
+      setIntradayData(data);
     } catch (error) {
       setIntradayResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
+      setIntradayData(null);
     }
 
     setIntradayLoading(false);
@@ -223,6 +228,14 @@ export default function ApiTest() {
                 </Button>
 
                 <ResultBox result={intradayResult} loading={intradayLoading} />
+
+                <IntradayChart
+                  data={intradayData?.data || []}
+                  isin={intradayData?.isin}
+                  currency={intradayData?.currency}
+                  last={intradayData?.last}
+                  lastTimestamp={intradayData?.lastTimestamp}
+                />
               </CardContent>
             </Card>
           </TabsContent>
