@@ -30,7 +30,7 @@ export default function Dashboard() {
     const { data, error } = await supabase
       .from("job_configurations")
       .select("*")
-      .order("created_at", { ascending: false });
+      .order("name", { ascending: true });
 
     if (!error && data) {
       setJobs(data);
