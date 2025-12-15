@@ -13,6 +13,7 @@ export function Header() {
     { path: "/api-docs", label: "API Docs", icon: FileText },
     { path: "/api-test", label: "API Test", icon: FlaskConical },
     { path: "/settings", label: "Settings", icon: Settings },
+    { path: "/terms", label: "Terms" },
   ];
 
   return (
@@ -21,7 +22,7 @@ export function Header() {
         <div className="flex items-center gap-6">
           <Link to="/" className="flex items-center gap-2">
             <TrendingUp className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-bold">Trade Aggregator</h1>
+            <h1 className="text-xl font-bold">Art13OpenTape</h1>
           </Link>
           <nav className="hidden md:flex items-center gap-1">
             {navItems.map((item) => (
