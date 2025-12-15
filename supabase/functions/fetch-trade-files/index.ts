@@ -9,7 +9,7 @@ interface JobConfiguration {
   id: string
   name: string
   source_url: string
-  source_type: 'cboe' | 'cboe_bxe' | 'cboe_cxe' | 'cboe_dxe' | 'nasdaq' | 'lseg' | 'custom'
+  source_type: 'cboe' | 'cboe_bxe' | 'cboe_cxe' | 'cboe_dxe' | 'cboe_sis' | 'nasdaq' | 'lseg' | 'custom'
   is_enabled: boolean
   last_run_at: string | null
 }
@@ -281,16 +281,30 @@ async function fetchCboeDataSinceLastRun(venue: string, lastRunAt: string | null
     venue = 'bxe' // default
   }
 
-  // Determine start time (last run or 1 hour ago if first run)
   const now = new Date()
-  const startTime = lastRunAt 
-    ? new Date(lastRunAt) 
-    : new Date(now.getTime() - 60 * 60 * 1000) // 1 hour ago if first run
   
   // End time is 5 minutes ago (data delay)
   const endTime = new Date(now.getTime() - 5 * 60 * 1000)
   
-  console.log(`CBOE: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
+  // Determine start time: max of (last_run_at, 2 hours ago)
+  // If no last run, go back 2 hours
+  let startTime: Date
+  if (lastRunAt) {
+    const lastRun = new Date(lastRunAt)
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+    // Use the more recent of: lastRun or twoHoursAgo
+    startTime = lastRun > twoHoursAgo ? lastRun : twoHoursAgo
+  } else {
+    // First run: go back 2 hours
+    startTime = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+  }
+  
+  // If start is after end, swap or just try the last 30 mins
+  if (startTime >= endTime) {
+    startTime = new Date(endTime.getTime() - 30 * 60 * 1000)
+  }
+  
+  console.log(`CBOE ${venue.toUpperCase()}: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
   
   // Generate all minute timestamps between start and end
   const currentTime = new Date(startTime)
@@ -310,26 +324,31 @@ async function fetchCboeDataSinceLastRun(venue: string, lastRunAt: string | null
     currentTime.setMinutes(currentTime.getMinutes() + 1)
   }
   
-  console.log(`CBOE: Trying ${urlsToTry.length} URLs`)
+  console.log(`CBOE ${venue.toUpperCase()}: Trying ${urlsToTry.length} URLs`)
   
-  // Fetch files in parallel (batch of 5 to avoid overwhelming)
-  for (let i = 0; i < urlsToTry.length; i += 5) {
-    const batch = urlsToTry.slice(i, i + 5)
+  // Fetch files in parallel (batch of 10 to speed up)
+  for (let i = 0; i < urlsToTry.length; i += 10) {
+    const batch = urlsToTry.slice(i, i + 10)
     const results = await Promise.allSettled(
       batch.map(async ({ url, fileName }) => {
-        const response = await fetch(url, {
-          headers: { 
-            'Accept': 'text/csv, */*',
-            'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
-          },
-          redirect: 'follow'
-        })
+        try {
+          const response = await fetch(url, {
+            headers: { 
+              'Accept': 'text/csv, */*',
+              'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+            },
+            redirect: 'follow'
+          })
 
-        if (response.ok) {
-          const data = await response.text()
-          if (data && data.includes('Timestamp') && data.includes('Symbol')) {
-            return { data, url, fileName }
+          if (response.ok) {
+            const data = await response.text()
+            // Valid CBOE file has headers
+            if (data && data.length > 100 && (data.includes('Timestamp') || data.includes('Symbol'))) {
+              return { data, url, fileName }
+            }
           }
+        } catch (e) {
+          // Silently ignore fetch errors for individual files
         }
         return null
       })
@@ -342,7 +361,7 @@ async function fetchCboeDataSinceLastRun(venue: string, lastRunAt: string | null
     }
   }
   
-  console.log(`CBOE: Found ${files.length} valid files`)
+  console.log(`CBOE ${venue.toUpperCase()}: Found ${files.length} valid files`)
   return files
 }
 
@@ -423,14 +442,25 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
 async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
-  // Determine start time (last run or 1 hour ago if first run)
   const now = new Date()
-  const startTime = lastRunAt 
-    ? new Date(lastRunAt) 
-    : new Date(now.getTime() - 60 * 60 * 1000) // 1 hour ago if first run
   
   // End time is 5 minutes ago (data delay)
   const endTime = new Date(now.getTime() - 5 * 60 * 1000)
+  
+  // Determine start time
+  let startTime: Date
+  if (lastRunAt) {
+    const lastRun = new Date(lastRunAt)
+    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+    startTime = lastRun > twoHoursAgo ? lastRun : twoHoursAgo
+  } else {
+    startTime = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+  }
+  
+  // Ensure valid time window
+  if (startTime >= endTime) {
+    startTime = new Date(endTime.getTime() - 30 * 60 * 1000)
+  }
   
   console.log(`Nasdaq: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
   
@@ -456,25 +486,29 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
   
   console.log(`Nasdaq: Trying ${urlsToTry.length} URLs`)
   
-  // Fetch files in parallel (batch of 5 to avoid overwhelming)
-  for (let i = 0; i < urlsToTry.length; i += 5) {
-    const batch = urlsToTry.slice(i, i + 5)
+  // Fetch files in parallel (batch of 10 to speed up)
+  for (let i = 0; i < urlsToTry.length; i += 10) {
+    const batch = urlsToTry.slice(i, i + 10)
     const results = await Promise.allSettled(
       batch.map(async ({ url, fileName }) => {
-        const response = await fetch(url, {
-          headers: { 
-            'Accept': 'text/csv, */*',
-            'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
-          },
-          redirect: 'follow'
-        })
+        try {
+          const response = await fetch(url, {
+            headers: { 
+              'Accept': 'text/csv, */*',
+              'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+            },
+            redirect: 'follow'
+          })
 
-        if (response.ok) {
-          const data = await response.text()
-          // Nasdaq files start with "sep=;" indicator
-          if (data && (data.includes('sep=;') || data.includes('Trading date and time'))) {
-            return { data, url, fileName }
+          if (response.ok) {
+            const data = await response.text()
+            // Nasdaq files start with "sep=;" indicator
+            if (data && (data.includes('sep=;') || data.includes('Trading date and time'))) {
+              return { data, url, fileName }
+            }
           }
+        } catch (e) {
+          // Silently ignore fetch errors
         }
         return null
       })
