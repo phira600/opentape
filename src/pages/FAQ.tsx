@@ -1,18 +1,9 @@
 import { Header } from "@/components/dashboard/Header";
 import { CheckCircle2, XCircle, AlertCircle, Shield, Scale, FileText } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
-
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 export default function FAQ() {
-  return (
-    <div className="min-h-screen bg-background">
+  return <div className="min-h-screen bg-background">
       <Header />
       <main className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="flex items-center gap-3 mb-2">
@@ -125,8 +116,7 @@ export default function FAQ() {
                 right to protect its servers. If you request data 100 times a second, they will block you for a 
                 <strong> Denial of Service (DoS)</strong> or "Abusive Scraping."
               </p>
-              <p className="text-muted-foreground">
-                <strong>The Fix:</strong> Use the built-in rate limits in Art13OpenTape. Do not poll faster than once every 15-20 minutes per instrument.
+              <p className="text-muted-foreground">The Fix: Use the built-in rate limits in Art13OpenTape which scrapes about once every 1 minute per exchange and filetype.<strong>The Fix:</strong> Use the built-in rate limits in Art13OpenTape. Do not poll faster than once every 15-20 minutes per instrument.
               </p>
             </div>
 
@@ -217,6 +207,5 @@ export default function FAQ() {
           </CardContent>
         </Card>
       </main>
-    </div>
-  );
+    </div>;
 }
