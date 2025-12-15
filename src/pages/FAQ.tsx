@@ -197,7 +197,7 @@ export default function FAQ() {
                 <span>I am NOT publishing the data on a public website.</span>
               </li>
               <li className="flex items-center gap-2">
-                <div className="h-5 w-5 border-2 border-muted-foreground rounded shrink-0" />
+                <CheckCircle2 className="h-5 w-5 text-green-500 shrink-0" />
                 <span>I am adhering to polite rate limits (not crashing their site).</span>
               </li>
             </ul>
