@@ -467,22 +467,26 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
   
   const now = new Date()
   
-  // End time is 20 minutes ago (15 min delay + 5 min buffer)
+  // Nasdaq files are 15 min delayed, so we look for files from 20-120 mins ago
   const endTime = new Date(now.getTime() - 20 * 60 * 1000)
   
-  // Determine start time
+  // Determine start time - go back further for Nasdaq since files are delayed
   let startTime: Date
   if (lastRunAt) {
     const lastRun = new Date(lastRunAt)
+    // Go back at least 2 hours or to last run, whichever is more recent
     const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
     startTime = lastRun > twoHoursAgo ? lastRun : twoHoursAgo
+    // But account for 15 min delay - shift start time back 15 min
+    startTime = new Date(startTime.getTime() - 15 * 60 * 1000)
   } else {
+    // First run: go back 2 hours
     startTime = new Date(now.getTime() - 2 * 60 * 60 * 1000)
   }
   
   // Ensure valid time window
   if (startTime >= endTime) {
-    startTime = new Date(endTime.getTime() - 30 * 60 * 1000)
+    startTime = new Date(endTime.getTime() - 60 * 60 * 1000) // Go back 1 hour
   }
   
   console.log(`Nasdaq: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
@@ -526,8 +530,10 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
 
           if (response.ok) {
             const data = await response.text()
-            // Nasdaq files start with "sep=;" indicator or have Trading date and time header
-            if (data && data.length > 50 && (data.includes('sep=;') || data.includes('Trading date and time'))) {
+            // Nasdaq files must have actual trade data (more than just "sep=;" header)
+            // Look for the Trading date and time header and actual data rows
+            if (data && data.includes('Trading date and time') && data.split('\n').length > 3) {
+              console.log(`Nasdaq: Found valid file ${fileName} with ${data.split('\n').length} lines`)
               return { data, url, fileName }
             }
           }
