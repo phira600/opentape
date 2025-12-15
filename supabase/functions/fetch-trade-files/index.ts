@@ -459,15 +459,16 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
   return trades
 }
 
-// Nasdaq URL pattern: https://tradereports.nasdaq.com/shares/trade-reports/post-trade
-// Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM} (no extension)
+// Nasdaq URL pattern: https://tradereports.nasdaq.com/api/regulatory/trade-report/download
+// Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM}
+// Data is 15 minutes delayed and available for 48 hours
 async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
   const now = new Date()
   
-  // End time is 5 minutes ago (data delay)
-  const endTime = new Date(now.getTime() - 5 * 60 * 1000)
+  // End time is 20 minutes ago (15 min delay + 5 min buffer)
+  const endTime = new Date(now.getTime() - 20 * 60 * 1000)
   
   // Determine start time
   let startTime: Date
@@ -486,7 +487,8 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
   
   console.log(`Nasdaq: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
   
-  const baseUrl = 'https://tradereports.nasdaq.com/shares/trade-reports/post-trade'
+  // Nasdaq API endpoint for downloading trade reports
+  const baseUrl = 'https://tradereports.nasdaq.com/api/regulatory/trade-report/download'
   
   // Generate all minute timestamps between start and end
   const currentTime = new Date(startTime)
@@ -497,9 +499,8 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
     const hour = currentTime.getUTCHours().toString().padStart(2, '0')
     const minute = currentTime.getUTCMinutes().toString().padStart(2, '0')
     
-    // Nasdaq files have NO extension
     const fileName = `NordicEquity-posttrade-${dateStr}T${hour}${minute}`
-    const url = `${baseUrl}/${fileName}`
+    const url = `${baseUrl}?type=POST_TRADE&assetClass=EQUITY&fileName=${fileName}`
     
     urlsToTry.push({ url, fileName })
     
@@ -525,8 +526,8 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
 
           if (response.ok) {
             const data = await response.text()
-            // Nasdaq files start with "sep=;" indicator
-            if (data && (data.includes('sep=;') || data.includes('Trading date and time'))) {
+            // Nasdaq files start with "sep=;" indicator or have Trading date and time header
+            if (data && data.length > 50 && (data.includes('sep=;') || data.includes('Trading date and time'))) {
               return { data, url, fileName }
             }
           }
