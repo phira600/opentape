@@ -254,13 +254,13 @@ export default function Settings() {
                       <TableCell className="font-medium">{key.name}</TableCell>
                       <TableCell>
                         <div className="flex items-center gap-2">
-                          <code className="font-mono text-xs bg-muted px-2 py-1 rounded max-w-[200px] truncate">
+                          <code className="font-mono text-xs bg-muted px-2 py-1 rounded break-all">
                             {key.prefix}
                           </code>
                           <Button
                             variant="ghost"
                             size="icon"
-                            className="h-6 w-6"
+                            className="h-6 w-6 shrink-0"
                             onClick={() => copyToClipboard(key.prefix)}
                           >
                             <Copy className="h-3 w-3" />
