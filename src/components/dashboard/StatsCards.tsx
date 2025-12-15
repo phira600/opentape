@@ -19,16 +19,22 @@ export function StatsCards() {
   });
 
   const fetchStats = async () => {
-    // Get total trades count
+    // Get start of today in UTC
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
+    const todayIso = today.toISOString();
+
+    // Get total trades count for today
     const { count: tradesCount } = await supabase
       .from("trades_normalized")
-      .select("*", { count: "exact", head: true });
+      .select("*", { count: "exact", head: true })
+      .gte("trade_time", todayIso);
 
-    // Get unique symbols and venues
+    // Get unique symbols and venues for today
     const { data: symbolsData } = await supabase
       .from("trades_normalized")
       .select("symbol, venue")
-      .limit(10000);
+      .gte("trade_time", todayIso);
 
     // Get last fetch time
     const { data: lastJob } = await supabase
@@ -80,7 +86,7 @@ export function StatsCards() {
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">{formatNumber(stats.totalTrades)}</div>
-          <p className="text-xs text-muted-foreground">Last 30 days</p>
+          <p className="text-xs text-muted-foreground">Today</p>
         </CardContent>
       </Card>
 
