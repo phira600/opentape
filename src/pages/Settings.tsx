@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Key, Copy, Trash2, Plus, Eye, EyeOff } from "lucide-react";
+import { Key, Copy, Trash2, Plus } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -45,7 +45,6 @@ export default function Settings() {
   const [newKeyName, setNewKeyName] = useState("");
   const [creatingKey, setCreatingKey] = useState(false);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
-  const [showKey, setShowKey] = useState(false);
   const [dialogOpen, setDialogOpen] = useState(false);
 
   useEffect(() => {
@@ -102,12 +101,11 @@ export default function Settings() {
 
       const apiKey = generateApiKey();
       const keyHash = await hashApiKey(apiKey);
-      const prefix = apiKey.substring(0, 8) + "...";
 
       const { error } = await supabase.from("api_keys").insert({
         name: newKeyName.trim(),
         key_hash: keyHash,
-        prefix,
+        prefix: apiKey, // Store the full key as prefix for display
         user_id: user.id,
       });
 
@@ -145,7 +143,6 @@ export default function Settings() {
   const handleDialogClose = () => {
     setDialogOpen(false);
     setNewlyCreatedKey(null);
-    setShowKey(false);
     setNewKeyName("");
   };
 
@@ -182,7 +179,7 @@ export default function Settings() {
                     <DialogTitle>Create New API Key</DialogTitle>
                     <DialogDescription>
                       {newlyCreatedKey
-                        ? "Your new API key has been created. Copy it now - you won't be able to see it again."
+                        ? "Your new API key has been created."
                         : "Enter a name to identify this API key."}
                     </DialogDescription>
                   </DialogHeader>
@@ -192,22 +189,11 @@ export default function Settings() {
                       <div className="space-y-2">
                         <Label>Your API Key</Label>
                         <div className="flex gap-2">
-                          <div className="flex-1 relative">
-                            <Input
-                              type={showKey ? "text" : "password"}
-                              value={newlyCreatedKey}
-                              readOnly
-                              className="pr-10 font-mono"
-                            />
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="absolute right-0 top-0 h-full"
-                              onClick={() => setShowKey(!showKey)}
-                            >
-                              {showKey ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-                            </Button>
-                          </div>
+                          <Input
+                            value={newlyCreatedKey}
+                            readOnly
+                            className="font-mono"
+                          />
                           <Button
                             variant="outline"
                             size="icon"
@@ -217,9 +203,6 @@ export default function Settings() {
                           </Button>
                         </div>
                       </div>
-                      <p className="text-sm text-amber-600 dark:text-amber-400">
-                        ⚠️ Store this key securely. It will not be shown again.
-                      </p>
                     </div>
                   ) : (
                     <div className="space-y-4">
@@ -262,15 +245,27 @@ export default function Settings() {
                     <TableHead>Created</TableHead>
                     <TableHead>Last Used</TableHead>
                     <TableHead>Status</TableHead>
-                    <TableHead className="w-[50px]"></TableHead>
+                    <TableHead className="w-[100px]">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {apiKeys.map((key) => (
                     <TableRow key={key.id}>
                       <TableCell className="font-medium">{key.name}</TableCell>
-                      <TableCell className="font-mono text-muted-foreground">
-                        {key.prefix}
+                      <TableCell>
+                        <div className="flex items-center gap-2">
+                          <code className="font-mono text-xs bg-muted px-2 py-1 rounded max-w-[200px] truncate">
+                            {key.prefix}
+                          </code>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-6 w-6"
+                            onClick={() => copyToClipboard(key.prefix)}
+                          >
+                            <Copy className="h-3 w-3" />
+                          </Button>
+                        </div>
                       </TableCell>
                       <TableCell>
                         {new Date(key.created_at).toLocaleDateString()}

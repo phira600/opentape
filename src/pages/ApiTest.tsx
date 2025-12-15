@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { Header } from "@/components/dashboard/Header";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,14 +8,25 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Badge } from "@/components/ui/badge";
-import { Loader2, Play, Copy, Check } from "lucide-react";
+import { Loader2, Play, Copy, Check, Key } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { IntradayChart } from "@/components/dashboard/IntradayChart";
 
+interface ApiKey {
+  id: string;
+  name: string;
+  prefix: string;
+}
+
 export default function ApiTest() {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
+
+  // API Key state
+  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [selectedApiKey, setSelectedApiKey] = useState<string>("");
+  const [manualApiKey, setManualApiKey] = useState<string>("");
 
   // Intraday state
   const [intradayIsin, setIntradayIsin] = useState("");
@@ -41,6 +52,27 @@ export default function ApiTest() {
   const [symLoading, setSymLoading] = useState(false);
   const [symResult, setSymResult] = useState<string>("");
 
+  useEffect(() => {
+    fetchApiKeys();
+  }, []);
+
+  const fetchApiKeys = async () => {
+    const { data } = await supabase
+      .from("api_keys")
+      .select("id, name, prefix")
+      .eq("is_active", true)
+      .order("created_at", { ascending: false });
+
+    if (data && data.length > 0) {
+      setApiKeys(data);
+      setSelectedApiKey(data[0].prefix);
+    }
+  };
+
+  const getActiveApiKey = (): string => {
+    return manualApiKey || selectedApiKey;
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
@@ -49,24 +81,37 @@ export default function ApiTest() {
   };
 
   const handleIntraday = async () => {
+    const apiKey = getActiveApiKey();
+    if (!apiKey) {
+      toast({ title: "Please select or enter an API key", variant: "destructive" });
+      return;
+    }
+
     setIntradayLoading(true);
     setIntradayResult("");
     setIntradayData(null);
 
     try {
-      const params: Record<string, string> = {
+      const params = new URLSearchParams({
         isin: intradayIsin,
         currency: intradayCurrency,
-      };
-      if (intradayInterval) params.interval = intradayInterval;
-
-      const { data, error } = await supabase.functions.invoke("intraday", {
-        body: params,
+        interval: intradayInterval,
       });
 
-      if (error) throw error;
+      const response = await fetch(
+        `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/intraday?${params}`,
+        {
+          headers: {
+            "x-api-key": apiKey,
+          },
+        }
+      );
+
+      const data = await response.json();
       setIntradayResult(JSON.stringify(data, null, 2));
-      setIntradayData(data);
+      if (!data.error) {
+        setIntradayData(data);
+      }
     } catch (error) {
       setIntradayResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
       setIntradayData(null);
@@ -76,19 +121,30 @@ export default function ApiTest() {
   };
 
   const handleQuotes = async () => {
+    const apiKey = getActiveApiKey();
+    if (!apiKey) {
+      toast({ title: "Please select or enter an API key", variant: "destructive" });
+      return;
+    }
+
     setQuotesLoading(true);
     setQuotesResult("");
 
     try {
-      const params: Record<string, string> = {};
-      if (quotesIsins) params.isins = quotesIsins;
-      if (quotesMic) params.mic = quotesMic;
+      const params = new URLSearchParams();
+      if (quotesIsins) params.append("isins", quotesIsins);
+      if (quotesMic) params.append("mic", quotesMic);
 
-      const { data, error } = await supabase.functions.invoke("quotes", {
-        body: params,
-      });
+      const response = await fetch(
+        `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/quotes?${params}`,
+        {
+          headers: {
+            "x-api-key": apiKey,
+          },
+        }
+      );
 
-      if (error) throw error;
+      const data = await response.json();
       setQuotesResult(JSON.stringify(data, null, 2));
     } catch (error) {
       setQuotesResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
@@ -161,6 +217,54 @@ export default function ApiTest() {
           </p>
         </div>
 
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Key className="h-5 w-5" />
+              API Key
+            </CardTitle>
+            <CardDescription>
+              Select an existing API key or enter one manually
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Select API Key</Label>
+                <Select value={selectedApiKey} onValueChange={setSelectedApiKey}>
+                  <SelectTrigger>
+                    <SelectValue placeholder="Select an API key" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {apiKeys.map((key) => (
+                      <SelectItem key={key.id} value={key.prefix}>
+                        {key.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Or enter manually</Label>
+                <Input
+                  placeholder="tdh_..."
+                  value={manualApiKey}
+                  onChange={(e) => setManualApiKey(e.target.value)}
+                  className="font-mono"
+                />
+              </div>
+            </div>
+            {getActiveApiKey() && (
+              <div className="mt-4 flex items-center gap-2">
+                <Badge variant="outline">Active:</Badge>
+                <code className="font-mono text-xs bg-muted px-2 py-1 rounded">
+                  {getActiveApiKey()}
+                </code>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
         <Tabs defaultValue="intraday" className="space-y-4">
           <TabsList className="flex-wrap h-auto">
             <TabsTrigger value="intraday">Intraday</TabsTrigger>
@@ -216,7 +320,7 @@ export default function ApiTest() {
                   </div>
                 </div>
 
-                <Button onClick={handleIntraday} disabled={intradayLoading || !intradayIsin || !intradayCurrency}>
+                <Button onClick={handleIntraday} disabled={intradayLoading || !intradayIsin || !intradayCurrency || !getActiveApiKey()}>
                   {intradayLoading ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
@@ -277,7 +381,7 @@ export default function ApiTest() {
                   </div>
                 </div>
 
-                <Button onClick={handleQuotes} disabled={quotesLoading}>
+                <Button onClick={handleQuotes} disabled={quotesLoading || !getActiveApiKey()}>
                   {quotesLoading ? (
                     <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                   ) : (
@@ -299,7 +403,7 @@ export default function ApiTest() {
                   <CardTitle>/query-symbology</CardTitle>
                 </div>
                 <CardDescription>
-                  Search and filter financial instrument reference data
+                  Search and filter financial instrument reference data (no API key required)
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">

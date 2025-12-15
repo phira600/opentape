@@ -3,10 +3,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/dashboard/Header";
 import { StatsCards } from "@/components/dashboard/StatsCards";
 import { DataSourceTable } from "@/components/dashboard/DataSourceTable";
-import { AddSourceDialog } from "@/components/dashboard/AddSourceDialog";
 import { ActivityLog } from "@/components/dashboard/ActivityLog";
 import { TradesTable } from "@/components/dashboard/TradesTable";
 import { SymbolExplorer } from "@/components/dashboard/SymbolExplorer";
+import { ProcessedFilesTable } from "@/components/dashboard/ProcessedFilesTable";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2 } from "lucide-react";
 
@@ -65,13 +65,11 @@ export default function Dashboard() {
             <TabsTrigger value="sources">Data Jobs</TabsTrigger>
             <TabsTrigger value="explorer">Trade Explorer</TabsTrigger>
             <TabsTrigger value="symbols">Symbol Explorer</TabsTrigger>
+            <TabsTrigger value="logs">Logs & Files</TabsTrigger>
           </TabsList>
 
           <TabsContent value="sources" className="space-y-4">
-            <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Data Jobs</h2>
-              <AddSourceDialog onAdded={fetchJobs} />
-            </div>
+            <h2 className="text-lg font-semibold">Data Jobs</h2>
 
             {isLoading ? (
               <div className="flex items-center justify-center py-12">
@@ -79,13 +77,11 @@ export default function Dashboard() {
               </div>
             ) : jobs.length === 0 ? (
               <p className="text-muted-foreground text-center py-12">
-                No data sources configured. Add one to get started.
+                No data sources configured.
               </p>
             ) : (
               <DataSourceTable jobs={jobs} onUpdate={fetchJobs} />
             )}
-
-            <ActivityLog />
           </TabsContent>
 
           <TabsContent value="explorer">
@@ -94,6 +90,13 @@ export default function Dashboard() {
 
           <TabsContent value="symbols">
             <SymbolExplorer />
+          </TabsContent>
+
+          <TabsContent value="logs" className="space-y-6">
+            <div className="grid gap-6 lg:grid-cols-2">
+              <ActivityLog />
+              <ProcessedFilesTable />
+            </div>
           </TabsContent>
         </Tabs>
       </main>
