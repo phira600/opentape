@@ -62,14 +62,14 @@ export default function Dashboard() {
         
         <Tabs defaultValue="sources" className="space-y-4">
           <TabsList>
-            <TabsTrigger value="sources">Data Sources</TabsTrigger>
+            <TabsTrigger value="sources">Data Jobs</TabsTrigger>
             <TabsTrigger value="explorer">Trade Explorer</TabsTrigger>
             <TabsTrigger value="symbols">Symbol Explorer</TabsTrigger>
           </TabsList>
 
           <TabsContent value="sources" className="space-y-4">
             <div className="flex items-center justify-between">
-              <h2 className="text-lg font-semibold">Data Sources</h2>
+              <h2 className="text-lg font-semibold">Data Jobs</h2>
               <AddSourceDialog onAdded={fetchJobs} />
             </div>
 

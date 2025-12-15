@@ -16,6 +16,20 @@ export default function ApiTest() {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
+  // Intraday state
+  const [intradayIsin, setIntradayIsin] = useState("");
+  const [intradayCurrency, setIntradayCurrency] = useState("");
+  const [intradayInterval, setIntradayInterval] = useState("1");
+  const [intradayLoading, setIntradayLoading] = useState(false);
+  const [intradayResult, setIntradayResult] = useState<string>("");
+
+  // Quotes state
+  const [quotesIsins, setQuotesIsins] = useState("");
+  const [quotesCurrency, setQuotesCurrency] = useState("");
+  const [quotesVenue, setQuotesVenue] = useState("");
+  const [quotesLoading, setQuotesLoading] = useState(false);
+  const [quotesResult, setQuotesResult] = useState<string>("");
+
   // Query Symbology state
   const [symSymbol, setSymSymbol] = useState("");
   const [symIsin, setSymIsin] = useState("");
@@ -26,25 +40,58 @@ export default function ApiTest() {
   const [symLoading, setSymLoading] = useState(false);
   const [symResult, setSymResult] = useState<string>("");
 
-  // Fetch Symbology state
-  const [fetchSymForce, setFetchSymForce] = useState(false);
-  const [fetchSymLoading, setFetchSymLoading] = useState(false);
-  const [fetchSymResult, setFetchSymResult] = useState<string>("");
-
-  // Fetch Trade Files state
-  const [fetchJobId, setFetchJobId] = useState("");
-  const [fetchLoading, setFetchLoading] = useState(false);
-  const [fetchResult, setFetchResult] = useState<string>("");
-
-  // Cleanup state
-  const [cleanupLoading, setCleanupLoading] = useState(false);
-  const [cleanupResult, setCleanupResult] = useState<string>("");
-
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
     toast({ title: "Copied to clipboard" });
+  };
+
+  const handleIntraday = async () => {
+    setIntradayLoading(true);
+    setIntradayResult("");
+
+    try {
+      const params: Record<string, string> = {
+        isin: intradayIsin,
+        currency: intradayCurrency,
+      };
+      if (intradayInterval) params.interval = intradayInterval;
+
+      const { data, error } = await supabase.functions.invoke("intraday", {
+        body: params,
+      });
+
+      if (error) throw error;
+      setIntradayResult(JSON.stringify(data, null, 2));
+    } catch (error) {
+      setIntradayResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
+    }
+
+    setIntradayLoading(false);
+  };
+
+  const handleQuotes = async () => {
+    setQuotesLoading(true);
+    setQuotesResult("");
+
+    try {
+      const params: Record<string, string> = {};
+      if (quotesIsins) params.isins = quotesIsins;
+      if (quotesCurrency) params.currency = quotesCurrency;
+      if (quotesVenue) params.venue = quotesVenue;
+
+      const { data, error } = await supabase.functions.invoke("quotes", {
+        body: params,
+      });
+
+      if (error) throw error;
+      setQuotesResult(JSON.stringify(data, null, 2));
+    } catch (error) {
+      setQuotesResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
+    }
+
+    setQuotesLoading(false);
   };
 
   const handleQuerySymbology = async () => {
@@ -71,61 +118,6 @@ export default function ApiTest() {
     }
 
     setSymLoading(false);
-  };
-
-  const handleFetchSymbology = async () => {
-    setFetchSymLoading(true);
-    setFetchSymResult("");
-
-    try {
-      const { data, error } = await supabase.functions.invoke("fetch-symbology", {
-        body: { force: fetchSymForce },
-      });
-
-      if (error) throw error;
-      setFetchSymResult(JSON.stringify(data, null, 2));
-    } catch (error) {
-      setFetchSymResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
-    }
-
-    setFetchSymLoading(false);
-  };
-
-  const handleFetchTradeFiles = async () => {
-    setFetchLoading(true);
-    setFetchResult("");
-
-    try {
-      const body: Record<string, string> = {};
-      if (fetchJobId) body.job_id = fetchJobId;
-
-      const { data, error } = await supabase.functions.invoke("fetch-trade-files", {
-        body,
-      });
-
-      if (error) throw error;
-      setFetchResult(JSON.stringify(data, null, 2));
-    } catch (error) {
-      setFetchResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
-    }
-
-    setFetchLoading(false);
-  };
-
-  const handleCleanup = async () => {
-    setCleanupLoading(true);
-    setCleanupResult("");
-
-    try {
-      const { data, error } = await supabase.functions.invoke("cleanup-old-trades");
-
-      if (error) throw error;
-      setCleanupResult(JSON.stringify(data, null, 2));
-    } catch (error) {
-      setCleanupResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
-    }
-
-    setCleanupLoading(false);
   };
 
   const ResultBox = ({ result, loading }: { result: string; loading: boolean }) => (
@@ -162,17 +154,140 @@ export default function ApiTest() {
         <div className="space-y-2">
           <h1 className="text-3xl font-bold">API Test Console</h1>
           <p className="text-muted-foreground">
-            Test the Trade Data Hub APIs interactively
+            Test the Trade Data Hub Market Data APIs interactively
           </p>
         </div>
 
-        <Tabs defaultValue="query-symbology" className="space-y-4">
+        <Tabs defaultValue="intraday" className="space-y-4">
           <TabsList className="flex-wrap h-auto">
+            <TabsTrigger value="intraday">Intraday</TabsTrigger>
+            <TabsTrigger value="quotes">Quotes</TabsTrigger>
             <TabsTrigger value="query-symbology">Query Symbology</TabsTrigger>
-            <TabsTrigger value="fetch-symbology">Fetch Symbology</TabsTrigger>
-            <TabsTrigger value="fetch-trades">Fetch Trade Files</TabsTrigger>
-            <TabsTrigger value="cleanup">Cleanup</TabsTrigger>
           </TabsList>
+
+          <TabsContent value="intraday">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">GET / POST</Badge>
+                  <CardTitle>/intraday</CardTitle>
+                </div>
+                <CardDescription>
+                  Get intraday OHLCV candlestick data for a symbol
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="intraday-isin">ISIN *</Label>
+                    <Input
+                      id="intraday-isin"
+                      placeholder="e.g., GB00BH4HKS39"
+                      value={intradayIsin}
+                      onChange={(e) => setIntradayIsin(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="intraday-currency">Currency *</Label>
+                    <Input
+                      id="intraday-currency"
+                      placeholder="e.g., GBP, EUR"
+                      value={intradayCurrency}
+                      onChange={(e) => setIntradayCurrency(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="intraday-interval">Interval (minutes)</Label>
+                    <Select value={intradayInterval} onValueChange={setIntradayInterval}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="1 minute" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="1">1 minute</SelectItem>
+                        <SelectItem value="5">5 minutes</SelectItem>
+                        <SelectItem value="15">15 minutes</SelectItem>
+                        <SelectItem value="30">30 minutes</SelectItem>
+                        <SelectItem value="60">1 hour</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <Button onClick={handleIntraday} disabled={intradayLoading || !intradayIsin || !intradayCurrency}>
+                  {intradayLoading ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Play className="h-4 w-4 mr-2" />
+                  )}
+                  Get Intraday Data
+                </Button>
+
+                <ResultBox result={intradayResult} loading={intradayLoading} />
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="quotes">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline">GET / POST</Badge>
+                  <CardTitle>/quotes</CardTitle>
+                </div>
+                <CardDescription>
+                  Get latest quotes for symbols (last, high, low, open, volume)
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="quotes-isins">ISINs (comma-separated)</Label>
+                    <Input
+                      id="quotes-isins"
+                      placeholder="e.g., GB00BH4HKS39,DE000BAY0017"
+                      value={quotesIsins}
+                      onChange={(e) => setQuotesIsins(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="quotes-currency">Currency</Label>
+                    <Input
+                      id="quotes-currency"
+                      placeholder="e.g., GBP, EUR"
+                      value={quotesCurrency}
+                      onChange={(e) => setQuotesCurrency(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="quotes-venue">Venue</Label>
+                    <Select value={quotesVenue} onValueChange={setQuotesVenue}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All venues" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="">All venues</SelectItem>
+                        <SelectItem value="SIS">SIS</SelectItem>
+                        <SelectItem value="BXE">BXE</SelectItem>
+                        <SelectItem value="CXE">CXE</SelectItem>
+                        <SelectItem value="DXE">DXE</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                <Button onClick={handleQuotes} disabled={quotesLoading}>
+                  {quotesLoading ? (
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                  ) : (
+                    <Play className="h-4 w-4 mr-2" />
+                  )}
+                  Get Quotes
+                </Button>
+
+                <ResultBox result={quotesResult} loading={quotesLoading} />
+              </CardContent>
+            </Card>
+          </TabsContent>
 
           <TabsContent value="query-symbology">
             <Card>
@@ -259,110 +374,6 @@ export default function ApiTest() {
                 </Button>
 
                 <ResultBox result={symResult} loading={symLoading} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="fetch-symbology">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">POST</Badge>
-                  <CardTitle>/fetch-symbology</CardTitle>
-                </div>
-                <CardDescription>
-                  Fetch and update symbology reference data from CBOE SIS
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="flex items-center space-x-2">
-                  <Switch
-                    id="fetch-sym-force"
-                    checked={fetchSymForce}
-                    onCheckedChange={setFetchSymForce}
-                  />
-                  <Label htmlFor="fetch-sym-force">Force run (ignore market hours)</Label>
-                </div>
-
-                <Button onClick={handleFetchSymbology} disabled={fetchSymLoading}>
-                  {fetchSymLoading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4 mr-2" />
-                  )}
-                  Fetch Symbology
-                </Button>
-
-                <ResultBox result={fetchSymResult} loading={fetchSymLoading} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="fetch-trades">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">POST</Badge>
-                  <CardTitle>/fetch-trade-files</CardTitle>
-                </div>
-                <CardDescription>
-                  Trigger data fetching for configured data sources
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <div className="space-y-2">
-                  <Label htmlFor="fetch-job-id">Job ID (optional)</Label>
-                  <Input
-                    id="fetch-job-id"
-                    placeholder="Leave empty to run all enabled jobs"
-                    value={fetchJobId}
-                    onChange={(e) => setFetchJobId(e.target.value)}
-                  />
-                  <p className="text-sm text-muted-foreground">
-                    If empty, all enabled jobs will be executed
-                  </p>
-                </div>
-
-                <Button onClick={handleFetchTradeFiles} disabled={fetchLoading}>
-                  {fetchLoading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4 mr-2" />
-                  )}
-                  Fetch Trade Files
-                </Button>
-
-                <ResultBox result={fetchResult} loading={fetchLoading} />
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="cleanup">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">POST</Badge>
-                  <CardTitle>/cleanup-old-trades</CardTitle>
-                </div>
-                <CardDescription>
-                  Remove trade data older than 30 days
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-6">
-                <p className="text-muted-foreground">
-                  This will delete all trade records and activity logs older than 30 days.
-                </p>
-
-                <Button onClick={handleCleanup} disabled={cleanupLoading} variant="destructive">
-                  {cleanupLoading ? (
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="h-4 w-4 mr-2" />
-                  )}
-                  Run Cleanup
-                </Button>
-
-                <ResultBox result={cleanupResult} loading={cleanupLoading} />
               </CardContent>
             </Card>
           </TabsContent>

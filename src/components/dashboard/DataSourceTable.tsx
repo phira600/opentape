@@ -12,7 +12,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
-import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2 } from "lucide-react";
+import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar } from "lucide-react";
 import { formatDistanceToNow, addSeconds, format } from "date-fns";
 
 interface JobConfiguration {
@@ -30,12 +30,31 @@ interface JobConfiguration {
 interface DataSourceTableProps {
   jobs: JobConfiguration[];
   onUpdate: () => void;
+  showCronJobs?: boolean;
 }
 
-export function DataSourceTable({ jobs, onUpdate }: DataSourceTableProps) {
+interface CronJob {
+  id: string;
+  name: string;
+  schedule: string;
+  description: string;
+  lastRun?: string | null;
+}
+
+const cronJobs: CronJob[] = [
+  {
+    id: "cleanup-old-trades",
+    name: "Data Cleanup",
+    schedule: "Daily at 00:00 UTC",
+    description: "Removes trades and logs older than 30 days",
+  },
+];
+
+export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSourceTableProps) {
   const { toast } = useToast();
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [runningId, setRunningId] = useState<string | null>(null);
+  const [runningCronId, setRunningCronId] = useState<string | null>(null);
 
   const handleToggle = async (job: JobConfiguration, enabled: boolean) => {
     setTogglingId(job.id);
@@ -86,6 +105,29 @@ export function DataSourceTable({ jobs, onUpdate }: DataSourceTableProps) {
     setRunningId(null);
   };
 
+  const handleRunCronJob = async (cronJob: CronJob) => {
+    setRunningCronId(cronJob.id);
+    try {
+      const { data, error } = await supabase.functions.invoke(cronJob.id);
+
+      if (error) throw error;
+
+      toast({
+        title: "Job complete",
+        description: data.deleted_count !== undefined
+          ? `Cleaned up ${data.deleted_count} old records`
+          : "Job completed successfully",
+      });
+    } catch (error) {
+      toast({
+        title: "Job failed",
+        description: error instanceof Error ? error.message : "Unknown error",
+        variant: "destructive",
+      });
+    }
+    setRunningCronId(null);
+  };
+
   const getStatusBadge = (job: JobConfiguration) => {
     switch (job.last_status) {
       case "success":
@@ -130,65 +172,105 @@ export function DataSourceTable({ jobs, onUpdate }: DataSourceTableProps) {
   };
 
   return (
-    <div className="rounded-md border">
-      <Table>
-        <TableHeader>
-          <TableRow>
-            <TableHead>Name</TableHead>
-            <TableHead>Type</TableHead>
-            <TableHead>Status</TableHead>
-            <TableHead>Last Run</TableHead>
-            <TableHead>Next Run</TableHead>
-            <TableHead>Enabled</TableHead>
-            <TableHead className="text-right">Actions</TableHead>
-          </TableRow>
-        </TableHeader>
-        <TableBody>
-          {jobs.map((job) => (
-            <TableRow key={job.id}>
-              <TableCell className="font-medium">{job.name}</TableCell>
-              <TableCell>
-                <Badge variant="outline">{job.source_type.toUpperCase()}</Badge>
-              </TableCell>
-              <TableCell>{getStatusBadge(job)}</TableCell>
-              <TableCell>
-                {job.last_run_at ? (
-                  <span className="text-sm text-muted-foreground flex items-center gap-1">
-                    <Clock className="h-3 w-3" />
-                    {formatDistanceToNow(new Date(job.last_run_at), { addSuffix: true })}
-                  </span>
-                ) : (
-                  <span className="text-sm text-muted-foreground">Never</span>
-                )}
-              </TableCell>
-              <TableCell>
-                <span className="text-sm text-muted-foreground">{getNextRunTime(job)}</span>
-              </TableCell>
-              <TableCell>
-                <Switch
-                  checked={job.is_enabled}
-                  onCheckedChange={(enabled) => handleToggle(job, enabled)}
-                  disabled={togglingId === job.id}
-                />
-              </TableCell>
-              <TableCell className="text-right">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handleManualRun(job)}
-                  disabled={runningId === job.id || !job.is_enabled}
-                >
-                  {runningId === job.id ? (
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                  ) : (
-                    <RefreshCw className="h-4 w-4" />
-                  )}
-                </Button>
-              </TableCell>
+    <div className="space-y-6">
+      <div className="rounded-md border">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Name</TableHead>
+              <TableHead>Type</TableHead>
+              <TableHead>Status</TableHead>
+              <TableHead>Last Run</TableHead>
+              <TableHead>Next Run</TableHead>
+              <TableHead>Enabled</TableHead>
+              <TableHead className="text-right">Actions</TableHead>
             </TableRow>
-          ))}
-        </TableBody>
-      </Table>
+          </TableHeader>
+          <TableBody>
+            {jobs.map((job) => (
+              <TableRow key={job.id}>
+                <TableCell className="font-medium">{job.name}</TableCell>
+                <TableCell>
+                  <Badge variant="outline">{job.source_type.toUpperCase()}</Badge>
+                </TableCell>
+                <TableCell>{getStatusBadge(job)}</TableCell>
+                <TableCell>
+                  {job.last_run_at ? (
+                    <span className="text-sm text-muted-foreground flex items-center gap-1">
+                      <Clock className="h-3 w-3" />
+                      {formatDistanceToNow(new Date(job.last_run_at), { addSuffix: true })}
+                    </span>
+                  ) : (
+                    <span className="text-sm text-muted-foreground">Never</span>
+                  )}
+                </TableCell>
+                <TableCell>
+                  <span className="text-sm text-muted-foreground">{getNextRunTime(job)}</span>
+                </TableCell>
+                <TableCell>
+                  <Switch
+                    checked={job.is_enabled}
+                    onCheckedChange={(enabled) => handleToggle(job, enabled)}
+                    disabled={togglingId === job.id}
+                  />
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleManualRun(job)}
+                    disabled={runningId === job.id || !job.is_enabled}
+                  >
+                    {runningId === job.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+
+            {showCronJobs && cronJobs.map((cronJob) => (
+              <TableRow key={cronJob.id} className="bg-muted/30">
+                <TableCell className="font-medium">{cronJob.name}</TableCell>
+                <TableCell>
+                  <Badge variant="secondary">
+                    <Calendar className="h-3 w-3 mr-1" />
+                    CRON
+                  </Badge>
+                </TableCell>
+                <TableCell>
+                  <Badge variant="outline">Scheduled</Badge>
+                </TableCell>
+                <TableCell>
+                  <span className="text-sm text-muted-foreground">{cronJob.description}</span>
+                </TableCell>
+                <TableCell>
+                  <span className="text-sm text-muted-foreground">{cronJob.schedule}</span>
+                </TableCell>
+                <TableCell>
+                  <Switch checked={true} disabled />
+                </TableCell>
+                <TableCell className="text-right">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handleRunCronJob(cronJob)}
+                    disabled={runningCronId === cronJob.id}
+                  >
+                    {runningCronId === cronJob.id ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                  </Button>
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </div>
     </div>
   );
 }

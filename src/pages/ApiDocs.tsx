@@ -3,7 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Code, Database, RefreshCw, Search } from "lucide-react";
+import { Code } from "lucide-react";
 
 const API_BASE_URL = `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1`;
 
@@ -19,6 +19,100 @@ interface ApiEndpoint {
 }
 
 const endpoints: ApiEndpoint[] = [
+  {
+    name: "Intraday OHLCV",
+    path: "/intraday",
+    method: "GET / POST",
+    description: "Get intraday OHLCV (Open, High, Low, Close, Volume) candlestick data for a symbol identified by ISIN and currency. Similar to EODHD/FMP intraday APIs.",
+    parameters: [
+      { name: "isin", type: "string", required: true, description: "ISIN code of the instrument (e.g., GB00BH4HKS39)" },
+      { name: "currency", type: "string", required: true, description: "Trading currency (e.g., GBP, EUR)" },
+      { name: "interval", type: "number", required: false, description: "Candle interval in minutes (default: 1)" },
+      { name: "from", type: "string", required: false, description: "Start datetime in ISO format (default: 24h ago)" },
+      { name: "to", type: "string", required: false, description: "End datetime in ISO format (default: now)" },
+    ],
+    responseFields: [
+      { name: "isin", type: "string", description: "Requested ISIN" },
+      { name: "currency", type: "string", description: "Trading currency" },
+      { name: "symbol", type: "string", description: "Resolved symbol code" },
+      { name: "venue", type: "string", description: "Trading venue" },
+      { name: "interval", type: "number", description: "Applied interval in minutes" },
+      { name: "from", type: "string", description: "Start of data range" },
+      { name: "to", type: "string", description: "End of data range" },
+      { name: "data", type: "array", description: "Array of OHLCV candles" },
+      { name: "data[].timestamp", type: "string", description: "Candle timestamp" },
+      { name: "data[].open", type: "number", description: "Opening price" },
+      { name: "data[].high", type: "number", description: "Highest price" },
+      { name: "data[].low", type: "number", description: "Lowest price" },
+      { name: "data[].close", type: "number", description: "Closing price" },
+      { name: "data[].volume", type: "number", description: "Trading volume" },
+    ],
+    exampleRequest: `GET ${API_BASE_URL}/intraday?isin=GB00BH4HKS39&currency=GBP&interval=5`,
+    exampleResponse: `{
+  "isin": "GB00BH4HKS39",
+  "currency": "GBP",
+  "symbol": "VOD",
+  "venue": "SIS",
+  "interval": 5,
+  "from": "2025-12-14T09:00:00Z",
+  "to": "2025-12-15T09:00:00Z",
+  "data": [
+    {
+      "timestamp": "2025-12-15T08:00:00Z",
+      "open": 72.50,
+      "high": 72.85,
+      "low": 72.45,
+      "close": 72.70,
+      "volume": 15000
+    }
+  ]
+}`,
+  },
+  {
+    name: "Quotes",
+    path: "/quotes",
+    method: "GET / POST",
+    description: "Get latest quote data (last price, daily high/low/open, volume) for one or more symbols. Filter by ISIN list, currency, or venue.",
+    parameters: [
+      { name: "isins", type: "string", required: false, description: "Comma-separated list of ISINs (e.g., GB00BH4HKS39,DE000BAY0017)" },
+      { name: "currency", type: "string", required: false, description: "Filter by currency (e.g., GBP, EUR)" },
+      { name: "venue", type: "string", required: false, description: "Filter by venue (e.g., SIS, BXE)" },
+    ],
+    responseFields: [
+      { name: "quotes", type: "array", description: "Array of quote objects" },
+      { name: "quotes[].isin", type: "string", description: "ISIN code" },
+      { name: "quotes[].currency", type: "string", description: "Trading currency" },
+      { name: "quotes[].symbol", type: "string", description: "Symbol code" },
+      { name: "quotes[].venue", type: "string", description: "Trading venue" },
+      { name: "quotes[].name", type: "string", description: "Company name" },
+      { name: "quotes[].last", type: "number", description: "Last traded price" },
+      { name: "quotes[].high", type: "number", description: "Daily high" },
+      { name: "quotes[].low", type: "number", description: "Daily low" },
+      { name: "quotes[].open", type: "number", description: "Opening price" },
+      { name: "quotes[].volume", type: "number", description: "Daily volume" },
+      { name: "quotes[].timestamp", type: "string", description: "Last update time" },
+      { name: "count", type: "number", description: "Number of quotes returned" },
+    ],
+    exampleRequest: `GET ${API_BASE_URL}/quotes?isins=GB00BH4HKS39,DE000BAY0017&currency=EUR`,
+    exampleResponse: `{
+  "quotes": [
+    {
+      "isin": "GB00BH4HKS39",
+      "currency": "EUR",
+      "symbol": "VOD",
+      "venue": "BXE",
+      "name": "VODAFONE GROUP PLC",
+      "last": 0.8520,
+      "high": 0.8550,
+      "low": 0.8480,
+      "open": 0.8500,
+      "volume": 125000,
+      "timestamp": "2025-12-15T08:45:00Z"
+    }
+  ],
+  "count": 1
+}`,
+  },
   {
     name: "Query Symbology",
     path: "/query-symbology",
@@ -56,88 +150,12 @@ const endpoints: ApiEndpoint[] = [
       "source": "CBOE",
       "mic": "XLON",
       "segment": null,
-      "tick_table": "T1",
-      "raw_data": {...}
+      "tick_table": "T1"
     }
   ],
   "count": 1,
   "limit": 10,
   "offset": 0
-}`,
-  },
-  {
-    name: "Fetch Trade Files",
-    path: "/fetch-trade-files",
-    method: "POST",
-    description: "Trigger data fetching for configured data sources. Can run all enabled jobs or a specific job by ID.",
-    parameters: [
-      { name: "job_id", type: "string", required: false, description: "Specific job ID to run. If omitted, runs all enabled jobs." },
-    ],
-    responseFields: [
-      { name: "success", type: "boolean", description: "Whether the operation completed" },
-      { name: "results", type: "array", description: "Array of results per job" },
-      { name: "results[].job_id", type: "string", description: "Job ID that was processed" },
-      { name: "results[].status", type: "string", description: "Status: success, error, or skipped" },
-      { name: "results[].files_count", type: "number", description: "Number of files processed" },
-      { name: "results[].trades_count", type: "number", description: "Number of trades inserted" },
-    ],
-    exampleRequest: `POST ${API_BASE_URL}/fetch-trade-files
-Content-Type: application/json
-
-{ "job_id": "uuid-of-job" }`,
-    exampleResponse: `{
-  "success": true,
-  "results": [
-    {
-      "job_id": "uuid",
-      "status": "success",
-      "files_count": 5,
-      "trades_count": 2500
-    }
-  ]
-}`,
-  },
-  {
-    name: "Fetch Symbology",
-    path: "/fetch-symbology",
-    method: "POST",
-    description: "Fetch and update symbology reference data from CBOE SIS (Systematic Internaliser Service). Updates the symbology table with latest instrument data.",
-    parameters: [
-      { name: "force", type: "boolean", required: false, description: "If true, run even outside market hours" },
-    ],
-    responseFields: [
-      { name: "success", type: "boolean", description: "Whether the operation succeeded" },
-      { name: "venue", type: "string", description: "Venue that was updated (SIS)" },
-      { name: "count", type: "number", description: "Number of symbols upserted" },
-      { name: "errors", type: "number", description: "Number of batch errors" },
-      { name: "skipped", type: "boolean", description: "True if skipped due to market hours" },
-      { name: "reason", type: "string", description: "Reason for skipping (if applicable)" },
-    ],
-    exampleRequest: `POST ${API_BASE_URL}/fetch-symbology
-Content-Type: application/json
-
-{ "force": true }`,
-    exampleResponse: `{
-  "success": true,
-  "venue": "SIS",
-  "count": 15420,
-  "errors": 0
-}`,
-  },
-  {
-    name: "Cleanup Old Trades",
-    path: "/cleanup-old-trades",
-    method: "POST",
-    description: "Remove trade data older than 30 days to manage database size. Also cleans up old activity logs.",
-    parameters: [],
-    responseFields: [
-      { name: "success", type: "boolean", description: "Whether the cleanup succeeded" },
-      { name: "deleted_count", type: "number", description: "Number of trade records deleted" },
-    ],
-    exampleRequest: `POST ${API_BASE_URL}/cleanup-old-trades`,
-    exampleResponse: `{
-  "success": true,
-  "deleted_count": 50000
 }`,
   },
 ];
@@ -150,7 +168,7 @@ export default function ApiDocs() {
         <div className="space-y-2">
           <h1 className="text-3xl font-bold">API Documentation</h1>
           <p className="text-muted-foreground">
-            Reference documentation for the Trade Data Hub APIs
+            Reference documentation for the Trade Data Hub Market Data APIs
           </p>
         </div>
 
