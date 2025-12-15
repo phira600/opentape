@@ -114,6 +114,11 @@ serve(async (req) => {
       })) || [];
     }
 
+    // Extract last price and timestamp from the most recent data point
+    const lastDataPoint = aggregatedData.length > 0 ? aggregatedData[aggregatedData.length - 1] : null;
+    const last = lastDataPoint ? lastDataPoint.close : null;
+    const lastTimestamp = lastDataPoint ? lastDataPoint.timestamp : null;
+
     console.log(`Returning ${aggregatedData.length} data points`);
 
     return new Response(
@@ -123,6 +128,8 @@ serve(async (req) => {
         interval: intervalMinutes,
         from: startTime.toISOString(),
         to: endTime.toISOString(),
+        last,
+        lastTimestamp,
         data: aggregatedData,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
