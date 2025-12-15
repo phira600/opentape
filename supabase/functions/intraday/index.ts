@@ -46,7 +46,7 @@ serve(async (req) => {
 
     console.log(`Fetching intraday data for ISIN=${isin}, currency=${currency}`);
 
-    // First, find symbols matching the ISIN+currency combination
+    // First, find all symbols matching the ISIN+currency combination across all venues
     const { data: symbols, error: symbolError } = await supabase
       .from("symbology")
       .select("symbol, venue, mic")
@@ -68,32 +68,65 @@ serve(async (req) => {
       );
     }
 
-    // Use the first matching symbol
-    const symbol = symbols[0].symbol;
-    const venue = symbols[0].venue;
-
-    console.log(`Found symbol=${symbol}, venue=${venue}`);
+    // Get unique symbol names to search for trades
+    const symbolNames = [...new Set(symbols.map(s => s.symbol))];
+    console.log(`Found symbols: ${symbolNames.join(", ")}`);
 
     // Parse time range
     const intervalMinutes = interval ? parseInt(interval) : 1;
     const endTime = to ? new Date(to) : new Date();
     const startTime = from ? new Date(from) : new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
 
-    // Fetch chart data using the RPC function
-    const { data: chartData, error: chartError } = await supabase.rpc("get_chart_data", {
-      p_symbol: symbol,
-      p_venue: venue,
-      p_start_time: startTime.toISOString(),
-      p_end_time: endTime.toISOString(),
-    });
+    // Fetch chart data for all matching symbols across all venues
+    let allChartData: any[] = [];
+    
+    for (const sym of symbolNames) {
+      // Try without venue restriction first to get data from any venue
+      const { data: chartData, error: chartError } = await supabase.rpc("get_chart_data", {
+        p_symbol: sym,
+        p_start_time: startTime.toISOString(),
+        p_end_time: endTime.toISOString(),
+      });
 
-    if (chartError) {
-      console.error("Error fetching chart data:", chartError);
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch intraday data", details: chartError.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      if (chartError) {
+        console.error(`Error fetching chart data for ${sym}:`, chartError);
+        continue;
+      }
+
+      if (chartData && chartData.length > 0) {
+        console.log(`Found ${chartData.length} data points for symbol ${sym}`);
+        allChartData = allChartData.concat(chartData);
+      }
     }
+
+    // Also try to find by ISIN directly in trades if symbol lookup failed
+    if (allChartData.length === 0) {
+      console.log("No chart data found via symbols, checking candles view directly...");
+      
+      // Query the candles view directly for any symbols
+      const { data: directCandles, error: directError } = await supabase
+        .from("candles_1min")
+        .select("*")
+        .in("symbol", symbolNames)
+        .gte("bucket", startTime.toISOString())
+        .lte("bucket", endTime.toISOString())
+        .order("bucket", { ascending: true })
+        .limit(1000);
+      
+      if (!directError && directCandles) {
+        allChartData = directCandles.map(c => ({
+          bucket: c.bucket,
+          open: c.open,
+          high: c.high,
+          low: c.low,
+          close: c.close,
+          volume: c.volume,
+        }));
+        console.log(`Found ${allChartData.length} candles directly`);
+      }
+    }
+
+    const chartData = allChartData;
 
     // Aggregate data if interval is greater than 1 minute
     let aggregatedData = chartData || [];
@@ -146,8 +179,7 @@ serve(async (req) => {
       JSON.stringify({
         isin,
         currency,
-        symbol,
-        venue,
+        symbols: symbolNames,
         interval: intervalMinutes,
         from: startTime.toISOString(),
         to: endTime.toISOString(),
