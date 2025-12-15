@@ -47,7 +47,7 @@ const DEFAULT_JOBS: DefaultJob[] = [
     source_url: 'https://www.cboe.com/markets/eu/equities/reference-data',
     source_type: 'cboe_sis',
     is_enabled: true,
-    fetch_interval_seconds: 3600, // Once per hour for symbology
+    fetch_interval_seconds: 86400, // Once per day for symbology
   },
 ]
 
