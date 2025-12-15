@@ -42,6 +42,13 @@ const DEFAULT_JOBS: DefaultJob[] = [
     is_enabled: true,
     fetch_interval_seconds: 60,
   },
+  {
+    name: 'CBOE SIS Symbology',
+    source_url: 'https://www.cboe.com/markets/eu/equities/reference-data',
+    source_type: 'cboe_sis',
+    is_enabled: true,
+    fetch_interval_seconds: 3600, // Once per hour for symbology
+  },
 ]
 
 Deno.serve(async (req) => {
