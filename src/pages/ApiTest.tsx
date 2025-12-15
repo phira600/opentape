@@ -260,12 +260,12 @@ export default function ApiTest() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="quotes-venue">Venue</Label>
-                    <Select value={quotesVenue} onValueChange={setQuotesVenue}>
+                    <Select value={quotesVenue || "all"} onValueChange={(v) => setQuotesVenue(v === "all" ? "" : v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="All venues" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">All venues</SelectItem>
+                        <SelectItem value="all">All venues</SelectItem>
                         <SelectItem value="SIS">SIS</SelectItem>
                         <SelectItem value="BXE">BXE</SelectItem>
                         <SelectItem value="CXE">CXE</SelectItem>
@@ -331,12 +331,12 @@ export default function ApiTest() {
                   </div>
                   <div className="space-y-2">
                     <Label htmlFor="sym-venue">Venue</Label>
-                    <Select value={symVenue} onValueChange={setSymVenue}>
+                    <Select value={symVenue || "all"} onValueChange={(v) => setSymVenue(v === "all" ? "" : v)}>
                       <SelectTrigger>
                         <SelectValue placeholder="All venues" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="">All venues</SelectItem>
+                        <SelectItem value="all">All venues</SelectItem>
                         <SelectItem value="SIS">SIS</SelectItem>
                         <SelectItem value="BXE">BXE</SelectItem>
                         <SelectItem value="CXE">CXE</SelectItem>
