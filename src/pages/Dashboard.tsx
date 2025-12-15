@@ -2,11 +2,10 @@ import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Header } from "@/components/dashboard/Header";
 import { StatsCards } from "@/components/dashboard/StatsCards";
-import { DataSourceCard } from "@/components/dashboard/DataSourceCard";
+import { DataSourceTable } from "@/components/dashboard/DataSourceTable";
 import { AddSourceDialog } from "@/components/dashboard/AddSourceDialog";
 import { ActivityLog } from "@/components/dashboard/ActivityLog";
 import { TradesTable } from "@/components/dashboard/TradesTable";
-import { PriceChart } from "@/components/dashboard/PriceChart";
 import { SymbolExplorer } from "@/components/dashboard/SymbolExplorer";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Loader2 } from "lucide-react";
@@ -20,6 +19,7 @@ interface JobConfiguration {
   last_run_at: string | null;
   last_status: string | null;
   last_error: string | null;
+  fetch_interval_seconds?: number;
 }
 
 export default function Dashboard() {
@@ -65,7 +65,6 @@ export default function Dashboard() {
             <TabsTrigger value="sources">Data Sources</TabsTrigger>
             <TabsTrigger value="explorer">Trade Explorer</TabsTrigger>
             <TabsTrigger value="symbols">Symbol Explorer</TabsTrigger>
-            <TabsTrigger value="charts">Charts</TabsTrigger>
           </TabsList>
 
           <TabsContent value="sources" className="space-y-4">
@@ -83,11 +82,7 @@ export default function Dashboard() {
                 No data sources configured. Add one to get started.
               </p>
             ) : (
-              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
-                {jobs.map((job) => (
-                  <DataSourceCard key={job.id} job={job} onUpdate={fetchJobs} />
-                ))}
-              </div>
+              <DataSourceTable jobs={jobs} onUpdate={fetchJobs} />
             )}
 
             <ActivityLog />
@@ -99,10 +94,6 @@ export default function Dashboard() {
 
           <TabsContent value="symbols">
             <SymbolExplorer />
-          </TabsContent>
-
-          <TabsContent value="charts">
-            <PriceChart />
           </TabsContent>
         </Tabs>
       </main>
