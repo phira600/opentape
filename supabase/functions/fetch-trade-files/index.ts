@@ -461,47 +461,59 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
 
 // Nasdaq URL pattern: https://tradereports.nasdaq.com/api/regulatory/trade-report/download
 // Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM}
+// IMPORTANT: File names use CET/CEST time (Europe/Stockholm), not UTC!
 // Data is 15 minutes delayed and available for 48 hours
 async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
   const now = new Date()
   
+  // Calculate CET offset (UTC+1 in winter, UTC+2 in summer)
+  // For simplicity, check if we're in DST (roughly last Sunday of March to last Sunday of October)
+  const year = now.getUTCFullYear()
+  const marchLastSunday = new Date(Date.UTC(year, 2, 31))
+  marchLastSunday.setUTCDate(31 - marchLastSunday.getUTCDay())
+  const octoberLastSunday = new Date(Date.UTC(year, 9, 31))
+  octoberLastSunday.setUTCDate(31 - octoberLastSunday.getUTCDay())
+  
+  const isDST = now >= marchLastSunday && now < octoberLastSunday
+  const cetOffset = isDST ? 2 : 1 // CEST = UTC+2, CET = UTC+1
+  
+  console.log(`Nasdaq: Using CET offset of ${cetOffset} hours (DST: ${isDST})`)
+  
   // Nasdaq files are 15 min delayed, so we look for files from 20-120 mins ago
   const endTime = new Date(now.getTime() - 20 * 60 * 1000)
   
-  // Determine start time - go back further for Nasdaq since files are delayed
+  // Determine start time
   let startTime: Date
   if (lastRunAt) {
     const lastRun = new Date(lastRunAt)
-    // Go back at least 2 hours or to last run, whichever is more recent
     const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
     startTime = lastRun > twoHoursAgo ? lastRun : twoHoursAgo
-    // But account for 15 min delay - shift start time back 15 min
     startTime = new Date(startTime.getTime() - 15 * 60 * 1000)
   } else {
-    // First run: go back 2 hours
     startTime = new Date(now.getTime() - 2 * 60 * 60 * 1000)
   }
   
-  // Ensure valid time window
   if (startTime >= endTime) {
-    startTime = new Date(endTime.getTime() - 60 * 60 * 1000) // Go back 1 hour
+    startTime = new Date(endTime.getTime() - 60 * 60 * 1000)
   }
   
-  console.log(`Nasdaq: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
+  console.log(`Nasdaq: UTC time window from ${startTime.toISOString()} to ${endTime.toISOString()}`)
   
   // Nasdaq API endpoint for downloading trade reports
   const baseUrl = 'https://tradereports.nasdaq.com/api/regulatory/trade-report/download'
   
-  // Generate all minute timestamps between start and end
+  // Generate all minute timestamps between start and end, converted to CET for filename
   const currentTime = new Date(startTime)
   const urlsToTry: { url: string; fileName: string }[] = []
   
   while (currentTime <= endTime) {
-    const dateStr = currentTime.toISOString().split('T')[0] // YYYY-MM-DD
-    const hour = currentTime.getUTCHours().toString().padStart(2, '0')
-    const minute = currentTime.getUTCMinutes().toString().padStart(2, '0')
+    // Convert UTC to CET for filename
+    const cetTime = new Date(currentTime.getTime() + cetOffset * 60 * 60 * 1000)
+    const dateStr = cetTime.toISOString().split('T')[0] // YYYY-MM-DD in CET
+    const hour = cetTime.getUTCHours().toString().padStart(2, '0')
+    const minute = cetTime.getUTCMinutes().toString().padStart(2, '0')
     
     const fileName = `NordicEquity-posttrade-${dateStr}T${hour}${minute}`
     const url = `${baseUrl}?type=POST_TRADE&assetClass=EQUITY&fileName=${fileName}`
@@ -512,7 +524,7 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
     currentTime.setMinutes(currentTime.getMinutes() + 1)
   }
   
-  console.log(`Nasdaq: Trying ${urlsToTry.length} URLs`)
+  console.log(`Nasdaq: Trying ${urlsToTry.length} URLs (first: ${urlsToTry[0]?.fileName}, last: ${urlsToTry[urlsToTry.length-1]?.fileName})`)
   
   // Fetch files in parallel (batch of 10 to speed up)
   for (let i = 0; i < urlsToTry.length; i += 10) {
@@ -531,7 +543,6 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<Fe
           if (response.ok) {
             const data = await response.text()
             // Nasdaq files must have actual trade data (more than just "sep=;" header)
-            // Look for the Trading date and time header and actual data rows
             if (data && data.includes('Trading date and time') && data.split('\n').length > 3) {
               console.log(`Nasdaq: Found valid file ${fileName} with ${data.split('\n').length} lines`)
               return { data, url, fileName }
