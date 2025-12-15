@@ -7,6 +7,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import ApiDocs from "./pages/ApiDocs";
 import ApiTest from "./pages/ApiTest";
+import Settings from "./pages/Settings";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
@@ -41,6 +42,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <ApiTest />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/settings"
+            element={
+              <ProtectedRoute>
+                <Settings />
               </ProtectedRoute>
             }
           />

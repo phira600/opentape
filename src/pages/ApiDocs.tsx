@@ -23,12 +23,12 @@ const endpoints: ApiEndpoint[] = [
     name: "Intraday OHLCV",
     path: "/intraday",
     method: "GET / POST",
-    description: "Get intraday OHLCV (Open, High, Low, Close, Volume) candlestick data for a symbol identified by ISIN and currency. Similar to EODHD/FMP intraday APIs.",
+    description: "Get intraday OHLCV (Open, High, Low, Close, Volume) candlestick data for a symbol identified by ISIN and currency. Requires API key authentication via x-api-key header.",
     parameters: [
       { name: "isin", type: "string", required: true, description: "ISIN code of the instrument (e.g., GB00BH4HKS39)" },
       { name: "currency", type: "string", required: true, description: "Trading currency (e.g., GBP, EUR)" },
       { name: "interval", type: "number", required: false, description: "Candle interval in minutes (default: 1)" },
-      { name: "from", type: "string", required: false, description: "Start datetime in ISO format (default: 24h ago)" },
+      { name: "from", type: "string", required: false, description: "Start datetime in ISO format (default: 00:00 UTC of the 'to' date)" },
       { name: "to", type: "string", required: false, description: "End datetime in ISO format (default: now)" },
     ],
     responseFields: [
@@ -47,14 +47,15 @@ const endpoints: ApiEndpoint[] = [
       { name: "data[].close", type: "number", description: "Closing price" },
       { name: "data[].volume", type: "number", description: "Trading volume" },
     ],
-    exampleRequest: `GET ${API_BASE_URL}/intraday?isin=GB00BH4HKS39&currency=GBP&interval=5`,
+    exampleRequest: `GET ${API_BASE_URL}/intraday?isin=GB00BH4HKS39&currency=GBP&interval=5
+Headers: x-api-key: your_api_key`,
     exampleResponse: `{
   "isin": "GB00BH4HKS39",
   "currency": "GBP",
   "symbol": "VOD",
   "venue": "SIS",
   "interval": 5,
-  "from": "2025-12-14T09:00:00Z",
+  "from": "2025-12-15T00:00:00Z",
   "to": "2025-12-15T09:00:00Z",
   "data": [
     {
@@ -72,7 +73,7 @@ const endpoints: ApiEndpoint[] = [
     name: "Quotes",
     path: "/quotes",
     method: "GET / POST",
-    description: "Get latest quote data (last price, daily high/low/open, volume) for one or more symbols. Supports ISIN:currency pairs for mixed queries (e.g., GB000*:GBP and SE000*:SEK) or query by MIC only.",
+    description: "Get latest quote data (last price, daily high/low/open, volume) for one or more symbols. Supports ISIN:currency pairs for mixed queries or query by MIC only. Requires API key authentication via x-api-key header.",
     parameters: [
       { name: "isins", type: "string", required: false, description: "Comma-separated ISINs with optional currency suffix (e.g., 'GB00BH4HKS39:GBP,SE0022419784:SEK' or just 'GB00BH4HKS39')" },
       { name: "mic", type: "string", required: false, description: "Query all instruments by MIC code (e.g., XLON, XSTO). Returns quotes for all ISINs at that MIC." },
@@ -92,7 +93,8 @@ const endpoints: ApiEndpoint[] = [
       { name: "quotes[].timestamp", type: "string", description: "Last update time" },
       { name: "count", type: "number", description: "Number of quotes returned" },
     ],
-    exampleRequest: `GET ${API_BASE_URL}/quotes?isins=GB00BH4HKS39:GBP,SE0022419784:SEK`,
+    exampleRequest: `GET ${API_BASE_URL}/quotes?isins=GB00BH4HKS39:GBP,SE0022419784:SEK
+Headers: x-api-key: your_api_key`,
     exampleResponse: `{
   "quotes": [
     {
@@ -195,6 +197,28 @@ export default function ApiDocs() {
             <code className="bg-muted px-3 py-2 rounded text-sm block overflow-x-auto">
               {API_BASE_URL}
             </code>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>Authentication</CardTitle>
+            <CardDescription>All API endpoints require authentication via API key</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-muted-foreground">
+              Include your API key in the <code className="bg-muted px-1.5 py-0.5 rounded text-sm">x-api-key</code> header with every request.
+            </p>
+            <div>
+              <h4 className="text-sm font-medium mb-2">Example</h4>
+              <pre className="bg-muted p-4 rounded text-sm overflow-x-auto">
+{`curl -X GET "${API_BASE_URL}/quotes?mic=XLON" \\
+  -H "x-api-key: your_api_key_here"`}
+              </pre>
+            </div>
+            <p className="text-sm text-muted-foreground">
+              Generate API keys from the Settings page in the dashboard.
+            </p>
           </CardContent>
         </Card>
 

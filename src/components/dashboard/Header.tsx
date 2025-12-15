@@ -1,6 +1,6 @@
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, LogOut, FileText, FlaskConical } from "lucide-react";
+import { TrendingUp, LogOut, FileText, FlaskConical, Settings } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 
@@ -12,6 +12,7 @@ export function Header() {
     { path: "/", label: "Dashboard" },
     { path: "/api-docs", label: "API Docs", icon: FileText },
     { path: "/api-test", label: "API Test", icon: FlaskConical },
+    { path: "/settings", label: "Settings", icon: Settings },
   ];
 
   return (

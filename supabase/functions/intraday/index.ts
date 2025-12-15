@@ -3,8 +3,36 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-api-key",
 };
+
+async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
+  if (!apiKey) return false;
+  
+  // Hash the API key using SubtleCrypto
+  const encoder = new TextEncoder();
+  const data = encoder.encode(apiKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  const { data: keyData, error } = await supabase
+    .from("api_keys")
+    .select("id, is_active")
+    .eq("key_hash", keyHash)
+    .eq("is_active", true)
+    .maybeSingle();
+  
+  if (error || !keyData) return false;
+  
+  // Update last_used_at
+  await supabase
+    .from("api_keys")
+    .update({ last_used_at: new Date().toISOString() })
+    .eq("id", keyData.id);
+  
+  return true;
+}
 
 serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -16,6 +44,17 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL")!,
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
+
+    // Validate API key
+    const apiKey = req.headers.get("x-api-key") || "";
+    const isValid = await validateApiKey(supabase, apiKey);
+    
+    if (!isValid) {
+      return new Response(
+        JSON.stringify({ error: "Invalid or missing API key" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
 
     // Parse parameters from query string or body
     let params: Record<string, string> = {};
