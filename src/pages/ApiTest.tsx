@@ -27,8 +27,7 @@ export default function ApiTest() {
 
   // Quotes state
   const [quotesIsins, setQuotesIsins] = useState("");
-  const [quotesCurrency, setQuotesCurrency] = useState("");
-  const [quotesVenue, setQuotesVenue] = useState("");
+  const [quotesMic, setQuotesMic] = useState("");
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [quotesResult, setQuotesResult] = useState<string>("");
 
@@ -83,8 +82,7 @@ export default function ApiTest() {
     try {
       const params: Record<string, string> = {};
       if (quotesIsins) params.isins = quotesIsins;
-      if (quotesCurrency) params.currency = quotesCurrency;
-      if (quotesVenue) params.venue = quotesVenue;
+      if (quotesMic) params.mic = quotesMic;
 
       const { data, error } = await supabase.functions.invoke("quotes", {
         body: params,
@@ -252,39 +250,30 @@ export default function ApiTest() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="quotes-isins">ISINs (comma-separated)</Label>
+                    <Label htmlFor="quotes-isins">ISINs (with optional :currency)</Label>
                     <Input
                       id="quotes-isins"
-                      placeholder="e.g., GB00BH4HKS39,DE000BAY0017"
+                      placeholder="e.g., GB00BH4HKS39:GBP,SE0022419784:SEK"
                       value={quotesIsins}
                       onChange={(e) => setQuotesIsins(e.target.value)}
                     />
+                    <p className="text-xs text-muted-foreground">
+                      Format: ISIN:CURRENCY for mixed queries
+                    </p>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="quotes-currency">Currency</Label>
+                    <Label htmlFor="quotes-mic">MIC (query by market)</Label>
                     <Input
-                      id="quotes-currency"
-                      placeholder="e.g., GBP, EUR"
-                      value={quotesCurrency}
-                      onChange={(e) => setQuotesCurrency(e.target.value)}
+                      id="quotes-mic"
+                      placeholder="e.g., XLON, XSTO"
+                      value={quotesMic}
+                      onChange={(e) => setQuotesMic(e.target.value)}
                     />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="quotes-venue">Venue</Label>
-                    <Select value={quotesVenue || "all"} onValueChange={(v) => setQuotesVenue(v === "all" ? "" : v)}>
-                      <SelectTrigger>
-                        <SelectValue placeholder="All venues" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">All venues</SelectItem>
-                        <SelectItem value="SIS">SIS</SelectItem>
-                        <SelectItem value="BXE">BXE</SelectItem>
-                        <SelectItem value="CXE">CXE</SelectItem>
-                        <SelectItem value="DXE">DXE</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <p className="text-xs text-muted-foreground">
+                      Returns all ISINs for the given MIC
+                    </p>
                   </div>
                 </div>
 

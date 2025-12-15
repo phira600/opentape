@@ -72,18 +72,17 @@ const endpoints: ApiEndpoint[] = [
     name: "Quotes",
     path: "/quotes",
     method: "GET / POST",
-    description: "Get latest quote data (last price, daily high/low/open, volume) for one or more symbols. Filter by ISIN list, currency, or venue.",
+    description: "Get latest quote data (last price, daily high/low/open, volume) for one or more symbols. Supports ISIN:currency pairs for mixed queries (e.g., GB000*:GBP and SE000*:SEK) or query by MIC only.",
     parameters: [
-      { name: "isins", type: "string", required: false, description: "Comma-separated list of ISINs (e.g., GB00BH4HKS39,DE000BAY0017)" },
-      { name: "currency", type: "string", required: false, description: "Filter by currency (e.g., GBP, EUR)" },
-      { name: "venue", type: "string", required: false, description: "Filter by venue (e.g., SIS, BXE)" },
+      { name: "isins", type: "string", required: false, description: "Comma-separated ISINs with optional currency suffix (e.g., 'GB00BH4HKS39:GBP,SE0022419784:SEK' or just 'GB00BH4HKS39')" },
+      { name: "mic", type: "string", required: false, description: "Query all instruments by MIC code (e.g., XLON, XSTO). Returns quotes for all ISINs at that MIC." },
     ],
     responseFields: [
       { name: "quotes", type: "array", description: "Array of quote objects" },
       { name: "quotes[].isin", type: "string", description: "ISIN code" },
       { name: "quotes[].currency", type: "string", description: "Trading currency" },
       { name: "quotes[].symbol", type: "string", description: "Symbol code" },
-      { name: "quotes[].venue", type: "string", description: "Trading venue" },
+      { name: "quotes[].mic", type: "string", description: "Market Identifier Code" },
       { name: "quotes[].name", type: "string", description: "Company name" },
       { name: "quotes[].last", type: "number", description: "Last traded price" },
       { name: "quotes[].high", type: "number", description: "Daily high" },
@@ -93,24 +92,37 @@ const endpoints: ApiEndpoint[] = [
       { name: "quotes[].timestamp", type: "string", description: "Last update time" },
       { name: "count", type: "number", description: "Number of quotes returned" },
     ],
-    exampleRequest: `GET ${API_BASE_URL}/quotes?isins=GB00BH4HKS39,DE000BAY0017&currency=EUR`,
+    exampleRequest: `GET ${API_BASE_URL}/quotes?isins=GB00BH4HKS39:GBP,SE0022419784:SEK`,
     exampleResponse: `{
   "quotes": [
     {
       "isin": "GB00BH4HKS39",
-      "currency": "EUR",
-      "symbol": "VOD",
-      "venue": "BXE",
+      "currency": "GBP",
+      "symbol": "GB00BH4HKS39",
+      "mic": "XLON",
       "name": "VODAFONE GROUP PLC",
-      "last": 0.8520,
-      "high": 0.8550,
-      "low": 0.8480,
-      "open": 0.8500,
+      "last": 72.50,
+      "high": 72.85,
+      "low": 72.30,
+      "open": 72.40,
       "volume": 125000,
+      "timestamp": "2025-12-15T08:45:00Z"
+    },
+    {
+      "isin": "SE0022419784",
+      "currency": "SEK",
+      "symbol": "SE0022419784",
+      "mic": "XSTO",
+      "name": "EXAMPLE AB",
+      "last": 150.20,
+      "high": 151.00,
+      "low": 149.50,
+      "open": 149.80,
+      "volume": 45000,
       "timestamp": "2025-12-15T08:45:00Z"
     }
   ],
-  "count": 1
+  "count": 2
 }`,
   },
   {

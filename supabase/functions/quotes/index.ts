@@ -10,7 +10,7 @@ interface QuoteResult {
   isin: string;
   currency: string;
   symbol: string;
-  venue: string;
+  mic: string | null;
   name: string | null;
   last: number;
   high: number;
@@ -18,6 +18,11 @@ interface QuoteResult {
   open: number;
   volume: number;
   timestamp: string;
+}
+
+interface IsinCurrencyPair {
+  isin: string;
+  currency: string;
 }
 
 serve(async (req) => {
@@ -41,63 +46,100 @@ serve(async (req) => {
       params = await req.json().catch(() => ({}));
     }
 
-    const { isins, currency, venue } = params;
+    const { isins, mic } = params;
 
-    console.log(`Fetching quotes for isins=${isins}, currency=${currency}, venue=${venue}`);
+    console.log(`Fetching quotes: isins=${isins}, mic=${mic}`);
 
-    // Parse ISINs list
-    const isinList = isins ? isins.split(",").map((s) => s.trim()) : [];
+    // Parse ISINs with optional currency: "SE0022419784:SEK,GB0000000001:GBP" or just "SE0022419784,GB0000000001"
+    const isinPairs: IsinCurrencyPair[] = [];
+    
+    if (isins) {
+      const isinList = isins.split(",").map((s) => s.trim());
+      for (const item of isinList) {
+        if (item.includes(":")) {
+          const [isin, currency] = item.split(":");
+          isinPairs.push({ isin: isin.trim(), currency: currency.trim() });
+        } else {
+          isinPairs.push({ isin: item, currency: "" });
+        }
+      }
+    }
 
-    if (isinList.length === 0) {
+    // If only MIC provided, fetch all ISINs for that MIC
+    if (isinPairs.length === 0 && mic) {
+      const { data: micData, error: micError } = await supabase
+        .from("symbology")
+        .select("isin, currency")
+        .eq("mic", mic)
+        .not("isin", "is", null);
+
+      if (micError) {
+        console.error("Error fetching MIC data:", micError);
+        return new Response(
+          JSON.stringify({ quotes: [], count: 0, error: micError.message }),
+          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (micData) {
+        for (const row of micData) {
+          if (row.isin) {
+            isinPairs.push({ isin: row.isin, currency: row.currency || "" });
+          }
+        }
+      }
+    }
+
+    if (isinPairs.length === 0) {
       return new Response(
-        JSON.stringify({ quotes: [], count: 0, error: "No ISINs provided" }),
+        JSON.stringify({ quotes: [], count: 0, error: "No ISINs provided or found for MIC" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`Fetching quotes for ${isinList.length} ISINs`);
+    console.log(`Processing ${isinPairs.length} ISIN/currency pairs`);
 
-    // Get today's data using ISIN directly as the symbol (trades store ISIN as symbol)
+    // Get today's data
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const startOfDay = today.toISOString();
 
     const quotes: QuoteResult[] = [];
 
-    for (const isin of isinList) {
-      // Get symbology info for this ISIN (for name lookup)
-      let symInfo: { name: string | null; currency: string | null } = { name: null, currency: null };
-      
-      const { data: symData } = await supabase
+    for (const pair of isinPairs) {
+      // Get symbology info for this ISIN
+      let query = supabase
         .from("symbology")
-        .select("name, currency")
-        .eq("isin", isin)
-        .limit(1)
-        .maybeSingle();
-      
-      if (symData) {
-        symInfo = symData;
+        .select("name, currency, mic")
+        .eq("isin", pair.isin);
+
+      // If currency specified, filter by it
+      if (pair.currency) {
+        query = query.eq("currency", pair.currency);
       }
 
-      // Skip if currency filter doesn't match
-      if (currency && symInfo.currency && symInfo.currency !== currency) {
+      const { data: symData } = await query.limit(1).maybeSingle();
+
+      if (!symData) {
+        console.log(`No symbology found for ISIN ${pair.isin} with currency ${pair.currency || 'any'}`);
         continue;
       }
 
-      // Get chart data using ISIN directly as the symbol
+      // Get chart data using ISIN as the symbol
       const { data: chartData, error: chartError } = await supabase.rpc("get_chart_data", {
-        p_symbol: isin,
-        p_venue: venue || null,
+        p_symbol: pair.isin,
+        p_venue: null,
         p_start_time: startOfDay,
         p_end_time: new Date().toISOString(),
       });
 
       if (chartError) {
-        console.error(`Error fetching data for ${isin}:`, chartError);
+        console.error(`Error fetching data for ${pair.isin}:`, chartError);
         continue;
       }
 
       if (!chartData || chartData.length === 0) {
+        console.log(`No chart data for ${pair.isin}`);
         continue;
       }
 
@@ -110,11 +152,11 @@ serve(async (req) => {
       const lastTimestamp = chartData[chartData.length - 1].bucket;
 
       quotes.push({
-        isin: isin,
-        currency: symInfo.currency || currency || "",
-        symbol: isin,
-        venue: venue || "ALL",
-        name: symInfo.name,
+        isin: pair.isin,
+        currency: symData.currency || pair.currency || "",
+        symbol: pair.isin,
+        mic: symData.mic,
+        name: symData.name,
         last: dayClose,
         high: dayHigh,
         low: dayLow,
