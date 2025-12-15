@@ -6,11 +6,14 @@ verify_jwt = false
 [functions.cleanup-old-trades]
 verify_jwt = false
 
-[functions.fetch-symbology]
-verify_jwt = false
-
 [functions.query-symbology]
 verify_jwt = false
 
 [functions.provision-default-jobs]
+verify_jwt = false
+
+[functions.intraday]
+verify_jwt = false
+
+[functions.quotes]
 verify_jwt = false
