@@ -470,19 +470,32 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
     const listUrl = 'https://tradereports.nasdaq.com/shares/trade-reports/post-trade'
     console.log(`Nasdaq: Fetching file list from ${listUrl}`)
     
-    const listResponse = await fetch(listUrl, {
-      headers: {
-        'Accept': 'text/html, */*',
-        'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+    // Use browser-like headers to avoid being blocked
+    let listResponse: Response | null = null
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        listResponse = await fetch(listUrl, {
+          headers: {
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Cache-Control': 'no-cache',
+          }
+        })
+        if (listResponse.ok) break
+      } catch (e) {
+        console.log(`Nasdaq: Fetch attempt ${attempt + 1} failed, retrying...`)
+        await new Promise(r => setTimeout(r, 1000))
       }
-    })
+    }
     
-    if (!listResponse.ok) {
-      console.error(`Nasdaq: Failed to fetch file list: ${listResponse.status}`)
+    if (!listResponse || !listResponse.ok) {
+      console.error(`Nasdaq: Failed to fetch file list after retries`)
       return files
     }
     
     const html = await listResponse.text()
+    console.log(`Nasdaq: Received ${html.length} bytes from page`)
     
     // Extract file names from the HTML - they're in links like:
     // href="...download?type=POST_TRADE&assetClass=EQUITY&fileName=NordicEquity-posttrade-2025-12-15T0913"
