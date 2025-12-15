@@ -17,3 +17,6 @@ verify_jwt = false
 
 [functions.quotes]
 verify_jwt = false
+
+[functions.fetch-symbology]
+verify_jwt = false
