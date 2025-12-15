@@ -49,6 +49,45 @@ export type Database = {
           },
         ]
       }
+      cron_job_configurations: {
+        Row: {
+          created_at: string
+          description: string | null
+          id: string
+          is_enabled: boolean
+          last_error: string | null
+          last_run_at: string | null
+          last_status: string | null
+          name: string
+          schedule: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          description?: string | null
+          id: string
+          is_enabled?: boolean
+          last_error?: string | null
+          last_run_at?: string | null
+          last_status?: string | null
+          name: string
+          schedule?: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          description?: string | null
+          id?: string
+          is_enabled?: boolean
+          last_error?: string | null
+          last_run_at?: string | null
+          last_status?: string | null
+          name?: string
+          schedule?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
       job_configurations: {
         Row: {
           created_at: string
