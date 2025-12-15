@@ -38,8 +38,20 @@ export default function Dashboard() {
     setIsLoading(false);
   };
 
+  const provisionDefaultJobs = async () => {
+    try {
+      const { error } = await supabase.functions.invoke("provision-default-jobs");
+      if (error) {
+        console.error("Failed to provision default jobs:", error);
+      }
+    } catch (e) {
+      console.error("Error provisioning jobs:", e);
+    }
+  };
+
   useEffect(() => {
-    fetchJobs();
+    // Provision default jobs on first load, then fetch
+    provisionDefaultJobs().then(() => fetchJobs());
   }, []);
 
   return (

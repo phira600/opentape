@@ -11,3 +11,6 @@ verify_jwt = false
 
 [functions.query-symbology]
 verify_jwt = false
+
+[functions.provision-default-jobs]
+verify_jwt = false

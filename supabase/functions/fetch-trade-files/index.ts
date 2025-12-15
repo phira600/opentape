@@ -9,7 +9,7 @@ interface JobConfiguration {
   id: string
   name: string
   source_url: string
-  source_type: 'cboe' | 'nasdaq' | 'lseg' | 'custom'
+  source_type: 'cboe' | 'cboe_bxe' | 'cboe_cxe' | 'cboe_dxe' | 'nasdaq' | 'lseg' | 'custom'
   is_enabled: boolean
   last_run_at: string | null
 }
@@ -91,14 +91,15 @@ Deno.serve(async (req) => {
         // Fetch all files since last run
         const files: FetchedFile[] = []
         
-        if (job.source_type === 'cboe') {
+        if (job.source_type === 'cboe' || job.source_type === 'cboe_bxe' || job.source_type === 'cboe_cxe' || job.source_type === 'cboe_dxe') {
           // CBOE has dynamic URLs based on venue and time - fetch all since last run
-          const cboeFiles = await fetchCboeDataSinceLastRun(job.source_url, job.last_run_at)
+          const venue = job.source_type.replace('cboe_', '') === 'cboe' ? 'bxe' : job.source_type.replace('cboe_', '')
+          const cboeFiles = await fetchCboeDataSinceLastRun(venue, job.last_run_at)
           files.push(...cboeFiles)
-          console.log(`Fetched ${cboeFiles.length} CBOE files`)
+          console.log(`Fetched ${cboeFiles.length} CBOE ${venue.toUpperCase()} files`)
         } else if (job.source_type === 'nasdaq') {
           // Nasdaq Nordic has dynamic URLs based on time - fetch all since last run
-          const nasdaqFiles = await fetchNasdaqDataSinceLastRun(job.source_url, job.last_run_at)
+          const nasdaqFiles = await fetchNasdaqDataSinceLastRun(job.last_run_at)
           files.push(...nasdaqFiles)
           console.log(`Fetched ${nasdaqFiles.length} Nasdaq files`)
         } else {
@@ -166,7 +167,7 @@ Deno.serve(async (req) => {
           const contentType = ''
           let trades: TradeRecord[] = []
           
-          if (job.source_type === 'cboe') {
+          if (job.source_type === 'cboe' || job.source_type === 'cboe_bxe' || job.source_type === 'cboe_cxe' || job.source_type === 'cboe_dxe') {
             trades = parseCboeData(rawData, job.name)
           } else if (job.source_type === 'nasdaq') {
             trades = parseNasdaqData(rawData, job.name)
@@ -272,17 +273,12 @@ Deno.serve(async (req) => {
 // CBOE URL pattern: https://www.cboe.com/europe/equities/trade_data/
 // Files are at: https://www.cboe.com/europe/equities/trade_data/{venue}/minute/rts13_public_trade_data_{venue}_{date}_{HHMM}.csv
 // Venues: bxe, cxe, dxe, apa
-async function fetchCboeDataSinceLastRun(sourceUrl: string, lastRunAt: string | null): Promise<FetchedFile[]> {
+async function fetchCboeDataSinceLastRun(venue: string, lastRunAt: string | null): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
-  // Parse venue from source_url - expect format like "cboe:bxe" or just "bxe"
-  let venue = 'bxe' // default venue
-  
-  if (sourceUrl.includes('cboe:')) {
-    venue = sourceUrl.split('cboe:')[1].trim().toLowerCase()
-  } else if (['bxe', 'cxe', 'dxe', 'apa'].some(v => sourceUrl.toLowerCase().includes(v))) {
-    const match = sourceUrl.toLowerCase().match(/(bxe|cxe|dxe|apa)/)
-    if (match) venue = match[1]
+  // Validate venue
+  if (!['bxe', 'cxe', 'dxe', 'apa'].includes(venue)) {
+    venue = 'bxe' // default
   }
 
   // Determine start time (last run or 1 hour ago if first run)
@@ -424,7 +420,7 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
 
 // Nasdaq URL pattern: https://tradereports.nasdaq.com/shares/trade-reports/post-trade
 // Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM}.csv
-async function fetchNasdaqDataSinceLastRun(sourceUrl: string, lastRunAt: string | null): Promise<FetchedFile[]> {
+async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
   // Determine start time (last run or 1 hour ago if first run)
