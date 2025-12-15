@@ -114,8 +114,8 @@ Deno.serve(async (req) => {
           files.push(...cboeFiles)
           console.log(`Fetched ${cboeFiles.length} CBOE ${venue.toUpperCase()} files`)
         } else if (job.source_type === 'nasdaq') {
-          // Nasdaq Nordic has dynamic URLs based on time - fetch all since last run
-          const nasdaqFiles = await fetchNasdaqDataSinceLastRun(job.last_run_at)
+          // Nasdaq Nordic - fetch file list from page and download new ones
+          const nasdaqFiles = await fetchNasdaqDataSinceLastRun(job.last_run_at, supabase, job.id)
           files.push(...nasdaqFiles)
           console.log(`Fetched ${nasdaqFiles.length} Nasdaq files`)
         } else {
@@ -459,110 +459,110 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
   return trades
 }
 
-// Nasdaq URL pattern: https://tradereports.nasdaq.com/api/regulatory/trade-report/download
-// Files are named: NordicEquity-posttrade-{YYYY-MM-DD}T{HHMM}
-// IMPORTANT: File names use CET/CEST time (Europe/Stockholm), not UTC!
-// Data is 15 minutes delayed and available for 48 hours
-async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null): Promise<FetchedFile[]> {
+// Nasdaq: Fetch the list of available files from the page, then download new ones
+// Files are listed at: https://tradereports.nasdaq.com/shares/trade-reports/post-trade
+// Download via: https://tradereports.nasdaq.com/api/regulatory/trade-report/download?type=POST_TRADE&assetClass=EQUITY&fileName=...
+async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: any, jobId: string): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
-  const now = new Date()
-  
-  // Calculate CET offset (UTC+1 in winter, UTC+2 in summer)
-  // For simplicity, check if we're in DST (roughly last Sunday of March to last Sunday of October)
-  const year = now.getUTCFullYear()
-  const marchLastSunday = new Date(Date.UTC(year, 2, 31))
-  marchLastSunday.setUTCDate(31 - marchLastSunday.getUTCDay())
-  const octoberLastSunday = new Date(Date.UTC(year, 9, 31))
-  octoberLastSunday.setUTCDate(31 - octoberLastSunday.getUTCDay())
-  
-  const isDST = now >= marchLastSunday && now < octoberLastSunday
-  const cetOffset = isDST ? 2 : 1 // CEST = UTC+2, CET = UTC+1
-  
-  console.log(`Nasdaq: Using CET offset of ${cetOffset} hours (DST: ${isDST})`)
-  
-  // Nasdaq files are 15 min delayed, so we look for files from 20-120 mins ago
-  const endTime = new Date(now.getTime() - 20 * 60 * 1000)
-  
-  // Determine start time
-  let startTime: Date
-  if (lastRunAt) {
-    const lastRun = new Date(lastRunAt)
-    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
-    startTime = lastRun > twoHoursAgo ? lastRun : twoHoursAgo
-    startTime = new Date(startTime.getTime() - 15 * 60 * 1000)
-  } else {
-    startTime = new Date(now.getTime() - 2 * 60 * 60 * 1000)
-  }
-  
-  if (startTime >= endTime) {
-    startTime = new Date(endTime.getTime() - 60 * 60 * 1000)
-  }
-  
-  console.log(`Nasdaq: UTC time window from ${startTime.toISOString()} to ${endTime.toISOString()}`)
-  
-  // Nasdaq API endpoint for downloading trade reports
-  const baseUrl = 'https://tradereports.nasdaq.com/api/regulatory/trade-report/download'
-  
-  // Generate all minute timestamps between start and end, converted to CET for filename
-  const currentTime = new Date(startTime)
-  const urlsToTry: { url: string; fileName: string }[] = []
-  
-  while (currentTime <= endTime) {
-    // Convert UTC to CET for filename
-    const cetTime = new Date(currentTime.getTime() + cetOffset * 60 * 60 * 1000)
-    const dateStr = cetTime.toISOString().split('T')[0] // YYYY-MM-DD in CET
-    const hour = cetTime.getUTCHours().toString().padStart(2, '0')
-    const minute = cetTime.getUTCMinutes().toString().padStart(2, '0')
+  try {
+    // Fetch the page listing all available files
+    const listUrl = 'https://tradereports.nasdaq.com/shares/trade-reports/post-trade'
+    console.log(`Nasdaq: Fetching file list from ${listUrl}`)
     
-    const fileName = `NordicEquity-posttrade-${dateStr}T${hour}${minute}`
-    const url = `${baseUrl}?type=POST_TRADE&assetClass=EQUITY&fileName=${fileName}`
+    const listResponse = await fetch(listUrl, {
+      headers: {
+        'Accept': 'text/html, */*',
+        'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+      }
+    })
     
-    urlsToTry.push({ url, fileName })
+    if (!listResponse.ok) {
+      console.error(`Nasdaq: Failed to fetch file list: ${listResponse.status}`)
+      return files
+    }
     
-    // Move to next minute
-    currentTime.setMinutes(currentTime.getMinutes() + 1)
-  }
-  
-  console.log(`Nasdaq: Trying ${urlsToTry.length} URLs (first: ${urlsToTry[0]?.fileName}, last: ${urlsToTry[urlsToTry.length-1]?.fileName})`)
-  
-  // Fetch files in parallel (batch of 10 to speed up)
-  for (let i = 0; i < urlsToTry.length; i += 10) {
-    const batch = urlsToTry.slice(i, i + 10)
-    const results = await Promise.allSettled(
-      batch.map(async ({ url, fileName }) => {
-        try {
-          const response = await fetch(url, {
-            headers: { 
-              'Accept': 'text/csv, */*',
-              'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
-            },
-            redirect: 'follow'
-          })
-
-          if (response.ok) {
-            const data = await response.text()
-            // Nasdaq files must have actual trade data (more than just "sep=;" header)
-            if (data && data.includes('Trading date and time') && data.split('\n').length > 3) {
-              console.log(`Nasdaq: Found valid file ${fileName} with ${data.split('\n').length} lines`)
-              return { data, url, fileName }
-            }
-          }
-        } catch (e) {
-          // Silently ignore fetch errors
-        }
-        return null
-      })
-    )
+    const html = await listResponse.text()
     
-    for (const result of results) {
-      if (result.status === 'fulfilled' && result.value) {
-        files.push(result.value)
+    // Extract file names from the HTML - they're in links like:
+    // href="...download?type=POST_TRADE&assetClass=EQUITY&fileName=NordicEquity-posttrade-2025-12-15T0913"
+    const filePattern = /fileName=(NordicEquity-posttrade-\d{4}-\d{2}-\d{2}T\d{4})/g
+    const availableFiles: string[] = []
+    let match
+    while ((match = filePattern.exec(html)) !== null) {
+      if (!availableFiles.includes(match[1])) {
+        availableFiles.push(match[1])
       }
     }
+    
+    console.log(`Nasdaq: Found ${availableFiles.length} files listed on page`)
+    
+    if (availableFiles.length === 0) {
+      return files
+    }
+    
+    // Sort files by name (they're time-ordered)
+    availableFiles.sort()
+    
+    // Get already processed files for this job
+    const { data: processedFiles } = await supabase
+      .from('processed_files')
+      .select('file_name')
+      .eq('job_id', jobId)
+    
+    const processedSet = new Set((processedFiles || []).map((f: { file_name: string }) => f.file_name))
+    
+    // Filter to only new files
+    const newFiles = availableFiles.filter(f => !processedSet.has(f))
+    console.log(`Nasdaq: ${newFiles.length} new files to process (${processedSet.size} already processed)`)
+    
+    if (newFiles.length === 0) {
+      return files
+    }
+    
+    // Download new files
+    const baseUrl = 'https://tradereports.nasdaq.com/api/regulatory/trade-report/download'
+    
+    for (let i = 0; i < newFiles.length; i += 5) {
+      const batch = newFiles.slice(i, i + 5)
+      const results = await Promise.allSettled(
+        batch.map(async (fileName) => {
+          const url = `${baseUrl}?type=POST_TRADE&assetClass=EQUITY&fileName=${fileName}`
+          try {
+            const response = await fetch(url, {
+              headers: { 
+                'Accept': 'text/csv, */*',
+                'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+              }
+            })
+
+            if (response.ok) {
+              const data = await response.text()
+              // Only accept files with actual trade data
+              if (data && data.includes('Trading date and time') && data.split('\n').length > 3) {
+                console.log(`Nasdaq: Downloaded ${fileName} (${data.split('\n').length} lines)`)
+                return { data, url, fileName }
+              }
+            }
+          } catch (e) {
+            console.error(`Nasdaq: Failed to download ${fileName}: ${e}`)
+          }
+          return null
+        })
+      )
+      
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value) {
+          files.push(result.value)
+        }
+      }
+    }
+    
+    console.log(`Nasdaq: Downloaded ${files.length} valid files`)
+  } catch (e) {
+    console.error(`Nasdaq: Error fetching files: ${e}`)
   }
   
-  console.log(`Nasdaq: Found ${files.length} valid files`)
   return files
 }
 
