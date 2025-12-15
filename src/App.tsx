@@ -9,6 +9,7 @@ import ApiDocs from "./pages/ApiDocs";
 import ApiTest from "./pages/ApiTest";
 import Settings from "./pages/Settings";
 import TermsOfUse from "./pages/TermsOfUse";
+import FAQ from "./pages/FAQ";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
@@ -59,6 +60,14 @@ const App = () => (
             element={
               <ProtectedRoute>
                 <TermsOfUse />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/faq"
+            element={
+              <ProtectedRoute>
+                <FAQ />
               </ProtectedRoute>
             }
           />
