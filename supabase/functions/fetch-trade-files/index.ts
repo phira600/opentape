@@ -80,6 +80,13 @@ Deno.serve(async (req) => {
         .eq('id', job.id)
 
       try {
+        // Skip SIS jobs early - they use fetch-symbology function instead
+        if (job.source_type === 'cboe_sis') {
+          console.log(`Skipping SIS job ${job.name} - handled by fetch-symbology`)
+          results.push({ job_id: job.id, status: 'skipped', reason: 'handled by fetch-symbology' })
+          continue
+        }
+
         // Log start
         await supabase.from('activity_logs').insert({
           job_id: job.id,
@@ -91,23 +98,7 @@ Deno.serve(async (req) => {
         // Fetch all files since last run
         const files: FetchedFile[] = []
         
-        if (job.source_type === 'cboe_sis') {
-          // Skip SIS jobs - they use fetch-symbology function instead
-          console.log(`Skipping SIS job ${job.name} - handled by fetch-symbology`)
-          await supabase.from('activity_logs').insert({
-            job_id: job.id,
-            log_type: 'info',
-            message: 'SIS symbology handled by dedicated function',
-          })
-          
-          await supabase
-            .from('job_configurations')
-            .update({ last_status: 'success' })
-            .eq('id', job.id)
-
-          results.push({ job_id: job.id, status: 'skipped', reason: 'handled by fetch-symbology' })
-          continue
-        } else if (job.source_type === 'cboe' || job.source_type === 'cboe_bxe' || job.source_type === 'cboe_cxe' || job.source_type === 'cboe_dxe') {
+        if (job.source_type === 'cboe' || job.source_type === 'cboe_bxe' || job.source_type === 'cboe_cxe' || job.source_type === 'cboe_dxe') {
           // CBOE has dynamic URLs based on venue and time - fetch all since last run
           const venue = job.source_type.replace('cboe_', '') === 'cboe' ? 'bxe' : job.source_type.replace('cboe_', '')
           const cboeFiles = await fetchCboeDataSinceLastRun(venue, job.last_run_at)
