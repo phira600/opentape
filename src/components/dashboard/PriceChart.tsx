@@ -38,23 +38,49 @@ export function PriceChart() {
   });
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Search symbols in backend
+  // Search symbols in trades_normalized (what we actually have data for) and symbology
   const searchSymbols = useCallback(async (query: string) => {
-    if (!query || query.length < 1) {
+    if (!query || query.length < 2) {
       setSearchResults([]);
       return;
     }
     setIsSearching(true);
-    const { data } = await supabase
+    
+    // Search in trades_normalized for symbols we have data for
+    const { data: tradeSymbols } = await supabase
+      .from("candles_1min")
+      .select("symbol")
+      .ilike("symbol", `%${query}%`)
+      .limit(20);
+
+    // Also search symbology for names
+    const { data: symbologyData } = await supabase
       .from("symbology")
-      .select("symbol, name")
-      .or(`symbol.ilike.%${query}%,name.ilike.%${query}%`)
+      .select("symbol, name, isin")
+      .or(`symbol.ilike.%${query}%,name.ilike.%${query}%,isin.ilike.%${query}%`)
       .limit(15);
 
-    if (data) {
-      const unique = Array.from(new Map(data.map((d) => [d.symbol, d])).values());
-      setSearchResults(unique);
-    }
+    // Combine: prioritize symbols that have candle data
+    const tradeSymbolSet = new Set((tradeSymbols || []).map(t => t.symbol));
+    const results: SymbolResult[] = [];
+    
+    // Add symbols from candles (we have data for these)
+    tradeSymbolSet.forEach(symbol => {
+      const symbologyMatch = symbologyData?.find(s => s.symbol === symbol || s.isin === symbol);
+      results.push({
+        symbol,
+        name: symbologyMatch?.name || null,
+      });
+    });
+    
+    // Add symbology matches that might match by ISIN
+    symbologyData?.forEach(s => {
+      if (s.isin && tradeSymbolSet.has(s.isin) && !results.find(r => r.symbol === s.isin)) {
+        results.push({ symbol: s.isin, name: s.name });
+      }
+    });
+
+    setSearchResults(results.slice(0, 15));
     setIsSearching(false);
   }, []);
 
