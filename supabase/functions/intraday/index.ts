@@ -49,7 +49,8 @@ serve(async (req) => {
     // Parse time range
     const intervalMinutes = interval ? parseInt(interval) : 1;
     const endTime = to ? new Date(to) : new Date();
-    const startTime = from ? new Date(from) : new Date(endTime.getTime() - 24 * 60 * 60 * 1000);
+    // Default startTime to 00:00 UTC of the same date as endTime
+    const startTime = from ? new Date(from) : new Date(Date.UTC(endTime.getUTCFullYear(), endTime.getUTCMonth(), endTime.getUTCDate(), 0, 0, 0, 0));
 
     // Trades use ISIN directly as the symbol column
     // Query candles_1min directly using ISIN as the symbol
