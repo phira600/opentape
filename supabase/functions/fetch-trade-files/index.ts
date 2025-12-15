@@ -459,64 +459,13 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
   return trades
 }
 
-// Nasdaq: Fetch the list of available files from the page, then download new ones
-// Files are listed at: https://tradereports.nasdaq.com/shares/trade-reports/post-trade
-// Download via: https://tradereports.nasdaq.com/api/regulatory/trade-report/download?type=POST_TRADE&assetClass=EQUITY&fileName=...
+// Nasdaq: Files are available for 48 hours with 15 min delay
+// File names use local Stockholm time (CET/CEST)
+// Since we can't scrape the JS-rendered page, generate all possible filenames for today
 async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: any, jobId: string): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
   try {
-    // Fetch the page listing all available files
-    const listUrl = 'https://tradereports.nasdaq.com/shares/trade-reports/post-trade'
-    console.log(`Nasdaq: Fetching file list from ${listUrl}`)
-    
-    // Use browser-like headers to avoid being blocked
-    let listResponse: Response | null = null
-    for (let attempt = 0; attempt < 3; attempt++) {
-      try {
-        listResponse = await fetch(listUrl, {
-          headers: {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Cache-Control': 'no-cache',
-          }
-        })
-        if (listResponse.ok) break
-      } catch (e) {
-        console.log(`Nasdaq: Fetch attempt ${attempt + 1} failed, retrying...`)
-        await new Promise(r => setTimeout(r, 1000))
-      }
-    }
-    
-    if (!listResponse || !listResponse.ok) {
-      console.error(`Nasdaq: Failed to fetch file list after retries`)
-      return files
-    }
-    
-    const html = await listResponse.text()
-    console.log(`Nasdaq: Received ${html.length} bytes from page`)
-    
-    // Extract file names from the HTML - they're in links like:
-    // href="...download?type=POST_TRADE&assetClass=EQUITY&fileName=NordicEquity-posttrade-2025-12-15T0913"
-    const filePattern = /fileName=(NordicEquity-posttrade-\d{4}-\d{2}-\d{2}T\d{4})/g
-    const availableFiles: string[] = []
-    let match
-    while ((match = filePattern.exec(html)) !== null) {
-      if (!availableFiles.includes(match[1])) {
-        availableFiles.push(match[1])
-      }
-    }
-    
-    console.log(`Nasdaq: Found ${availableFiles.length} files listed on page`)
-    
-    if (availableFiles.length === 0) {
-      return files
-    }
-    
-    // Sort files by name (they're time-ordered)
-    availableFiles.sort()
-    
     // Get already processed files for this job
     const { data: processedFiles } = await supabase
       .from('processed_files')
@@ -524,41 +473,77 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
       .eq('job_id', jobId)
     
     const processedSet = new Set((processedFiles || []).map((f: { file_name: string }) => f.file_name))
+    console.log(`Nasdaq: ${processedSet.size} files already processed`)
     
-    // Filter to only new files
-    const newFiles = availableFiles.filter(f => !processedSet.has(f))
-    console.log(`Nasdaq: ${newFiles.length} new files to process (${processedSet.size} already processed)`)
+    const now = new Date()
     
-    if (newFiles.length === 0) {
-      return files
-    }
+    // Calculate Stockholm time (CET = UTC+1, CEST = UTC+2)
+    const year = now.getUTCFullYear()
+    const marchLastSunday = new Date(Date.UTC(year, 2, 31))
+    marchLastSunday.setUTCDate(31 - marchLastSunday.getUTCDay())
+    const octoberLastSunday = new Date(Date.UTC(year, 9, 31))
+    octoberLastSunday.setUTCDate(31 - octoberLastSunday.getUTCDay())
+    const isDST = now >= marchLastSunday && now < octoberLastSunday
+    const stockholmOffset = isDST ? 2 : 1
     
-    // Download new files
+    // Stockholm time now
+    const stockholmNow = new Date(now.getTime() + stockholmOffset * 60 * 60 * 1000)
+    
+    // Files are available from market open (08:00) to 15 mins ago
+    // Generate files for today only, from 08:00 Stockholm to current time - 15 mins
+    const todayStr = stockholmNow.toISOString().split('T')[0]
+    
+    // End at current Stockholm time minus 15 mins
+    const endHour = stockholmNow.getUTCHours()
+    const endMinute = stockholmNow.getUTCMinutes() - 15
+    
+    const urlsToTry: { url: string; fileName: string }[] = []
     const baseUrl = 'https://tradereports.nasdaq.com/api/regulatory/trade-report/download'
     
-    for (let i = 0; i < newFiles.length; i += 5) {
-      const batch = newFiles.slice(i, i + 5)
+    // Generate from 08:00 to end time
+    for (let h = 8; h <= endHour; h++) {
+      const maxMin = (h === endHour) ? Math.max(0, endMinute) : 59
+      const startMin = 0
+      
+      for (let m = startMin; m <= maxMin; m++) {
+        const hourStr = h.toString().padStart(2, '0')
+        const minStr = m.toString().padStart(2, '0')
+        const fileName = `NordicEquity-posttrade-${todayStr}T${hourStr}${minStr}`
+        
+        // Skip already processed files
+        if (processedSet.has(fileName)) continue
+        
+        const url = `${baseUrl}?type=POST_TRADE&assetClass=EQUITY&fileName=${fileName}`
+        urlsToTry.push({ url, fileName })
+      }
+    }
+    
+    console.log(`Nasdaq: Trying ${urlsToTry.length} new files for ${todayStr}`)
+    
+    // Fetch files in parallel (batch of 10)
+    for (let i = 0; i < urlsToTry.length; i += 10) {
+      const batch = urlsToTry.slice(i, i + 10)
       const results = await Promise.allSettled(
-        batch.map(async (fileName) => {
-          const url = `${baseUrl}?type=POST_TRADE&assetClass=EQUITY&fileName=${fileName}`
+        batch.map(async ({ url, fileName }) => {
           try {
             const response = await fetch(url, {
               headers: { 
                 'Accept': 'text/csv, */*',
-                'User-Agent': 'Mozilla/5.0 (compatible; TradeDataFetcher/1.0)'
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
               }
             })
 
             if (response.ok) {
               const data = await response.text()
-              // Only accept files with actual trade data
-              if (data && data.includes('Trading date and time') && data.split('\n').length > 3) {
-                console.log(`Nasdaq: Downloaded ${fileName} (${data.split('\n').length} lines)`)
+              // Only accept files with actual trade data (more than header + sep line)
+              const lines = data.split('\n').filter(l => l.trim())
+              if (data.includes('Trading date and time') && lines.length > 2) {
+                console.log(`Nasdaq: Found ${fileName} (${lines.length} lines)`)
                 return { data, url, fileName }
               }
             }
           } catch (e) {
-            console.error(`Nasdaq: Failed to download ${fileName}: ${e}`)
+            // Ignore errors for individual files
           }
           return null
         })
@@ -573,7 +558,7 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
     
     console.log(`Nasdaq: Downloaded ${files.length} valid files`)
   } catch (e) {
-    console.error(`Nasdaq: Error fetching files: ${e}`)
+    console.error(`Nasdaq: Error: ${e}`)
   }
   
   return files
