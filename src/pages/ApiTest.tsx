@@ -13,19 +13,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { IntradayChart } from "@/components/dashboard/IntradayChart";
 
-interface ApiKey {
-  id: string;
-  name: string;
-  prefix: string;
-}
-
 export default function ApiTest() {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
   // API Key state
-  const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
-  const [selectedApiKey, setSelectedApiKey] = useState<string>("");
   const [manualApiKey, setManualApiKey] = useState<string>("");
 
   // Intraday state
@@ -52,25 +44,8 @@ export default function ApiTest() {
   const [symLoading, setSymLoading] = useState(false);
   const [symResult, setSymResult] = useState<string>("");
 
-  useEffect(() => {
-    fetchApiKeys();
-  }, []);
-
-  const fetchApiKeys = async () => {
-    const { data } = await supabase
-      .from("api_keys")
-      .select("id, name, prefix")
-      .eq("is_active", true)
-      .order("created_at", { ascending: false });
-
-    if (data && data.length > 0) {
-      setApiKeys(data);
-      setSelectedApiKey(data[0].prefix);
-    }
-  };
-
   const getActiveApiKey = (): string => {
-    return manualApiKey || selectedApiKey;
+    return manualApiKey;
   };
 
   const copyToClipboard = (text: string) => {
@@ -224,44 +199,32 @@ export default function ApiTest() {
               API Key
             </CardTitle>
             <CardDescription>
-              Select an existing API key or enter one manually
+              Enter your API key to test authenticated endpoints. Get your key from Settings.
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-4">
               <div className="space-y-2">
-                <Label>Select API Key</Label>
-                <Select value={selectedApiKey} onValueChange={setSelectedApiKey}>
-                  <SelectTrigger>
-                    <SelectValue placeholder="Select an API key" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {apiKeys.map((key) => (
-                      <SelectItem key={key.id} value={key.prefix}>
-                        {key.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div className="space-y-2">
-                <Label>Or enter manually</Label>
+                <Label>API Key</Label>
                 <Input
                   placeholder="tdh_..."
                   value={manualApiKey}
                   onChange={(e) => setManualApiKey(e.target.value)}
                   className="font-mono"
                 />
+                <p className="text-xs text-muted-foreground">
+                  Enter the full API key (e.g., tdh_abc123...). You can find or create keys in Settings.
+                </p>
               </div>
+              {manualApiKey && (
+                <div className="flex items-center gap-2">
+                  <Badge variant="default">Active</Badge>
+                  <code className="font-mono text-xs bg-muted px-2 py-1 rounded">
+                    {manualApiKey.substring(0, 12)}...
+                  </code>
+                </div>
+              )}
             </div>
-            {getActiveApiKey() && (
-              <div className="mt-4 flex items-center gap-2">
-                <Badge variant="outline">Active:</Badge>
-                <code className="font-mono text-xs bg-muted px-2 py-1 rounded">
-                  {getActiveApiKey()}
-                </code>
-              </div>
-            )}
           </CardContent>
         </Card>
 
