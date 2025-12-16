@@ -33,6 +33,8 @@ export default function ApiTest() {
   const [intradayIsin, setIntradayIsin] = useState("");
   const [intradayCurrency, setIntradayCurrency] = useState("");
   const [intradayInterval, setIntradayInterval] = useState("1");
+  const [intradayFrom, setIntradayFrom] = useState("");
+  const [intradayTo, setIntradayTo] = useState("");
   const [intradayLoading, setIntradayLoading] = useState(false);
   const [intradayResult, setIntradayResult] = useState<string>("");
   const [intradayData, setIntradayData] = useState<any>(null);
@@ -48,8 +50,11 @@ export default function ApiTest() {
   const [symIsin, setSymIsin] = useState("");
   const [symName, setSymName] = useState("");
   const [symVenue, setSymVenue] = useState("");
+  const [symSource, setSymSource] = useState("");
+  const [symCurrency, setSymCurrency] = useState("");
   const [symExact, setSymExact] = useState(false);
   const [symLimit, setSymLimit] = useState("10");
+  const [symOffset, setSymOffset] = useState("0");
   const [symLoading, setSymLoading] = useState(false);
   const [symResult, setSymResult] = useState<string>("");
 
@@ -76,11 +81,12 @@ export default function ApiTest() {
     setIntradayData(null);
 
     try {
-      const params = new URLSearchParams({
-        isin: intradayIsin,
-        currency: intradayCurrency,
-        interval: intradayInterval,
-      });
+      const params = new URLSearchParams();
+      params.append("isin", intradayIsin);
+      params.append("currency", intradayCurrency);
+      params.append("interval", intradayInterval);
+      if (intradayFrom) params.append("from", intradayFrom);
+      if (intradayTo) params.append("to", intradayTo);
 
       const response = await fetch(
         `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/intraday?${params}`,
@@ -147,8 +153,11 @@ export default function ApiTest() {
       if (symIsin) params.isin = symIsin;
       if (symName) params.name = symName;
       if (symVenue) params.venue = symVenue;
+      if (symSource) params.source = symSource;
+      if (symCurrency) params.currency = symCurrency;
       if (symExact) params.exact = "true";
       if (symLimit) params.limit = symLimit;
+      if (symOffset && symOffset !== "0") params.offset = symOffset;
 
       const { data, error } = await supabase.functions.invoke("query-symbology", {
         body: params,
@@ -290,6 +299,26 @@ export default function ApiTest() {
                       </SelectContent>
                     </Select>
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="intraday-from">From (ISO datetime)</Label>
+                    <Input
+                      id="intraday-from"
+                      placeholder="e.g., 2025-12-16T08:00:00Z"
+                      value={intradayFrom}
+                      onChange={(e) => setIntradayFrom(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">Optional. Defaults to 00:00 UTC today</p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="intraday-to">To (ISO datetime)</Label>
+                    <Input
+                      id="intraday-to"
+                      placeholder="e.g., 2025-12-16T16:00:00Z"
+                      value={intradayTo}
+                      onChange={(e) => setIntradayTo(e.target.value)}
+                    />
+                    <p className="text-xs text-muted-foreground">Optional. Defaults to now</p>
+                  </div>
                 </div>
 
                 <Button onClick={handleIntraday} disabled={intradayLoading || !intradayIsin || !intradayCurrency || !getActiveApiKey()}>
@@ -379,7 +408,7 @@ export default function ApiTest() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+                <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                   <div className="space-y-2">
                     <Label htmlFor="sym-symbol">Symbol</Label>
                     <Input
@@ -423,13 +452,44 @@ export default function ApiTest() {
                     </Select>
                   </div>
                   <div className="space-y-2">
+                    <Label htmlFor="sym-source">Source</Label>
+                    <Select value={symSource || "all"} onValueChange={(v) => setSymSource(v === "all" ? "" : v)}>
+                      <SelectTrigger>
+                        <SelectValue placeholder="All sources" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All sources</SelectItem>
+                        <SelectItem value="CBOE">CBOE</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="sym-currency">Currency</Label>
+                    <Input
+                      id="sym-currency"
+                      placeholder="e.g., EUR, GBP"
+                      value={symCurrency}
+                      onChange={(e) => setSymCurrency(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
                     <Label htmlFor="sym-limit">Limit</Label>
                     <Input
                       id="sym-limit"
                       type="number"
-                      placeholder="10"
+                      placeholder="100"
                       value={symLimit}
                       onChange={(e) => setSymLimit(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="sym-offset">Offset</Label>
+                    <Input
+                      id="sym-offset"
+                      type="number"
+                      placeholder="0"
+                      value={symOffset}
+                      onChange={(e) => setSymOffset(e.target.value)}
                     />
                   </div>
                   <div className="flex items-center space-x-2 pt-6">
