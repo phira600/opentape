@@ -32,7 +32,7 @@ Deno.serve(async (req) => {
     // Build query
     let dbQuery = supabase
       .from('symbology')
-      .select('*')
+      .select('id, symbol, isin, name, venue, currency, source, mic, segment, tick_table')
     
     // Filter by symbol (exact or partial match)
     if (query.symbol) {
@@ -74,9 +74,10 @@ Deno.serve(async (req) => {
     
     dbQuery = dbQuery
       .order('symbol', { ascending: true })
+      .order('isin', { ascending: true })
       .range(offset, offset + limit - 1)
     
-    const { data, error, count } = await dbQuery
+    const { data, error } = await dbQuery
     
     if (error) {
       console.error('Query error:', error)
@@ -86,11 +87,46 @@ Deno.serve(async (req) => {
       )
     }
     
+    // Deduplicate by creating a flat structure grouped by ISIN
+    // Each ISIN appears once with all its venues/currencies as arrays
+    const deduped = new Map<string, any>()
+    
+    for (const row of (data || [])) {
+      const key = row.isin || row.symbol // Use ISIN as primary key, fallback to symbol
+      
+      if (!deduped.has(key)) {
+        deduped.set(key, {
+          isin: row.isin,
+          symbol: row.symbol,
+          name: row.name,
+          currency: row.currency,
+          source: row.source,
+          mic: row.mic,
+          segment: row.segment,
+          tick_table: row.tick_table,
+          venues: [row.venue],
+        })
+      } else {
+        const existing = deduped.get(key)
+        // Add venue if not already present
+        if (!existing.venues.includes(row.venue)) {
+          existing.venues.push(row.venue)
+        }
+        // Prefer non-null values
+        if (!existing.name && row.name) existing.name = row.name
+        if (!existing.currency && row.currency) existing.currency = row.currency
+        if (!existing.mic && row.mic) existing.mic = row.mic
+        if (!existing.segment && row.segment) existing.segment = row.segment
+      }
+    }
+    
+    const flatData = Array.from(deduped.values())
+    
     return new Response(
       JSON.stringify({ 
         success: true, 
-        data,
-        count: data?.length || 0,
+        data: flatData,
+        count: flatData.length,
         limit,
         offset 
       }),

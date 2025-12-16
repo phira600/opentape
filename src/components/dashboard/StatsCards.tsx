@@ -30,11 +30,21 @@ export function StatsCards() {
       .select("*", { count: "exact", head: true })
       .gte("trade_time", todayIso);
 
-    // Get unique symbols and venues for today
+    // Get unique symbols count using RPC or fetching distinct values with pagination
+    // Since we can't do COUNT DISTINCT directly, we'll use the symbology table for symbols
+    // and fetch unique venues from trades (venues are limited, ~34)
     const { data: symbolsData } = await supabase
+      .from("symbology")
+      .select("symbol", { count: "exact", head: true });
+    
+    // For venues, fetch distinct - there are few of them
+    const { data: venuesData } = await supabase
       .from("trades_normalized")
-      .select("symbol, venue")
-      .gte("trade_time", todayIso);
+      .select("venue")
+      .gte("trade_time", todayIso)
+      .limit(1000);
+    
+    const uniqueVenues = venuesData ? new Set(venuesData.map((t) => t.venue)) : new Set();
 
     // Get last fetch time
     const { data: lastJob } = await supabase
@@ -44,17 +54,22 @@ export function StatsCards() {
       .limit(1)
       .single();
 
-    if (symbolsData) {
-      const uniqueSymbols = new Set(symbolsData.map((t) => t.symbol));
-      const uniqueVenues = new Set(symbolsData.map((t) => t.venue));
+    // For unique symbols traded today, we need a different approach
+    // Use candles_1min view which already has aggregated data
+    const { data: candlesSymbols } = await supabase
+      .from("candles_1min")
+      .select("symbol")
+      .gte("bucket", todayIso)
+      .limit(10000);
+    
+    const uniqueSymbolsToday = candlesSymbols ? new Set(candlesSymbols.map((c) => c.symbol)) : new Set();
 
-      setStats({
-        totalTrades: tradesCount || 0,
-        totalSymbols: uniqueSymbols.size,
-        totalVenues: uniqueVenues.size,
-        lastFetch: lastJob?.last_run_at || null,
-      });
-    }
+    setStats({
+      totalTrades: tradesCount || 0,
+      totalSymbols: uniqueSymbolsToday.size,
+      totalVenues: uniqueVenues.size,
+      lastFetch: lastJob?.last_run_at || null,
+    });
   };
 
   useEffect(() => {
