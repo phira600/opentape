@@ -163,6 +163,30 @@ export type Database = {
         }
         Relationships: []
       }
+      mv_refresh_log: {
+        Row: {
+          id: string
+          refresh_duration_ms: number | null
+          refreshed_at: string
+          rows_count: number | null
+          view_name: string
+        }
+        Insert: {
+          id?: string
+          refresh_duration_ms?: number | null
+          refreshed_at?: string
+          rows_count?: number | null
+          view_name: string
+        }
+        Update: {
+          id?: string
+          refresh_duration_ms?: number | null
+          refreshed_at?: string
+          rows_count?: number | null
+          view_name?: string
+        }
+        Relationships: []
+      }
       processed_files: {
         Row: {
           file_hash: string
