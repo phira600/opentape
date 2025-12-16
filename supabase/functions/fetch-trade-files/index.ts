@@ -264,8 +264,16 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Refresh materialized view after processing
-    await supabase.rpc('refresh_candles')
+    // Refresh candles in background - don't await to avoid timeout
+    console.log('Starting candles refresh in background...')
+    Promise.resolve(supabase.rpc('refresh_candles'))
+      .then((result) => {
+        if (result.error) {
+          console.error('Candles refresh error:', result.error.message)
+        } else {
+          console.log('Candles refresh completed successfully')
+        }
+      })
 
     return new Response(
       JSON.stringify({ success: true, results }),

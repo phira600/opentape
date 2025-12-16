@@ -82,6 +82,42 @@ export type Database = {
         }
         Relationships: []
       }
+      candles_1min: {
+        Row: {
+          bucket: string
+          close: number | null
+          high: number | null
+          low: number | null
+          open: number | null
+          symbol: string
+          trade_count: number | null
+          venue: string
+          volume: number | null
+        }
+        Insert: {
+          bucket: string
+          close?: number | null
+          high?: number | null
+          low?: number | null
+          open?: number | null
+          symbol: string
+          trade_count?: number | null
+          venue: string
+          volume?: number | null
+        }
+        Update: {
+          bucket?: string
+          close?: number | null
+          high?: number | null
+          low?: number | null
+          open?: number | null
+          symbol?: string
+          trade_count?: number | null
+          venue?: string
+          volume?: number | null
+        }
+        Relationships: []
+      }
       cron_job_configurations: {
         Row: {
           created_at: string
@@ -325,20 +361,7 @@ export type Database = {
       }
     }
     Views: {
-      candles_1min: {
-        Row: {
-          bucket: string | null
-          close: number | null
-          high: number | null
-          low: number | null
-          open: number | null
-          symbol: string | null
-          trade_count: number | null
-          venue: string | null
-          volume: number | null
-        }
-        Relationships: []
-      }
+      [_ in never]: never
     }
     Functions: {
       cleanup_old_trades: { Args: never; Returns: number }
