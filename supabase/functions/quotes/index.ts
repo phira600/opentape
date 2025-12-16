@@ -51,6 +51,23 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   return true;
 }
 
+// Aggregate trades into OHLCV data
+function aggregateTrades(trades: any[] | undefined): { open: number; high: number; low: number; close: number; volume: number; timestamp: string } | null {
+  if (!trades || trades.length === 0) return null;
+  
+  // Sort by trade_time
+  const sorted = [...trades].sort((a, b) => new Date(a.trade_time).getTime() - new Date(b.trade_time).getTime());
+  
+  return {
+    open: sorted[0].price,
+    high: Math.max(...sorted.map(t => t.price)),
+    low: Math.min(...sorted.map(t => t.price)),
+    close: sorted[sorted.length - 1].price,
+    volume: sorted.reduce((sum, t) => sum + (t.quantity || 0), 0),
+    timestamp: sorted[sorted.length - 1].trade_time,
+  };
+}
+
 serve(async (req) => {
   if (req.method === "OPTIONS") {
     return new Response(null, { headers: corsHeaders });
@@ -102,7 +119,11 @@ serve(async (req) => {
       }
     }
 
-    // If only MIC provided, fetch all ISINs for that MIC with symbology data in one query
+    // Get today's data range
+    const today = new Date();
+    const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0)).toISOString();
+
+    // If only MIC provided, fetch all ISINs for that MIC
     if (isinPairs.length === 0 && mic) {
       const { data: micData, error: micError } = await supabase
         .from("symbology")
@@ -119,57 +140,39 @@ serve(async (req) => {
       }
 
       if (micData && micData.length > 0) {
-        // Get today's data
-        const today = new Date();
-        const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0)).toISOString();
-        const endOfDay = new Date().toISOString();
-        
-        // Get unique ISINs and fetch all candles in one query
         const uniqueIsins = [...new Set(micData.map(r => r.isin))];
         
-        // Query candles directly for all ISINs at once
-        const { data: candlesData, error: candlesError } = await supabase
-          .from("candles_1min")
-          .select("symbol, bucket, open, high, low, close, volume")
+        // Query trades_normalized directly
+        const { data: tradesData, error: tradesError } = await supabase
+          .from("trades_normalized")
+          .select("symbol, price, quantity, trade_time")
           .in("symbol", uniqueIsins)
-          .gte("bucket", startOfDay)
-          .lte("bucket", endOfDay)
-          .order("bucket", { ascending: true });
+          .gte("trade_time", startOfDay)
+          .order("trade_time", { ascending: true });
 
-        if (candlesError) {
-          console.error("Error fetching candles:", candlesError);
+        if (tradesError) {
+          console.error("Error fetching trades:", tradesError);
           return new Response(
-            JSON.stringify({ quotes: [], count: 0, error: candlesError.message }),
+            JSON.stringify({ quotes: [], count: 0, error: tradesError.message }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
           );
         }
 
-        // Group candles by ISIN
-        const candlesByIsin = new Map<string, any[]>();
-        for (const candle of (candlesData || [])) {
-          const existing = candlesByIsin.get(candle.symbol) || [];
-          existing.push(candle);
-          candlesByIsin.set(candle.symbol, existing);
+        // Group trades by symbol (ISIN)
+        const tradesByIsin = new Map<string, any[]>();
+        for (const trade of (tradesData || [])) {
+          const existing = tradesByIsin.get(trade.symbol) || [];
+          existing.push(trade);
+          tradesByIsin.set(trade.symbol, existing);
         }
 
-        // Build quotes from symbology and grouped candles
+        // Build quotes from symbology and grouped trades
         const quotes: QuoteResult[] = [];
         for (const sym of micData) {
           if (!sym.isin) continue;
-          const candles = candlesByIsin.get(sym.isin);
-          if (!candles || candles.length === 0) continue;
-
-          // Sort candles by bucket to ensure correct order
-          const sortedCandles = [...candles].sort((a: any, b: any) => 
-            new Date(a.bucket).getTime() - new Date(b.bucket).getTime()
-          );
-          const dayOpen = sortedCandles[0].open;
-          const dayHigh = Math.max(...sortedCandles.map((c: any) => c.high));
-          const dayLow = Math.min(...sortedCandles.map((c: any) => c.low));
-          const dayClose = sortedCandles[sortedCandles.length - 1].close;
-          const dayVolume = sortedCandles.reduce((sum: number, c: any) => sum + (c.volume || 0), 0);
-          // Use the LAST candle's timestamp (most recent trade time)
-          const lastTimestamp = sortedCandles[sortedCandles.length - 1].bucket;
+          const trades = tradesByIsin.get(sym.isin);
+          const agg = aggregateTrades(trades);
+          if (!agg) continue;
 
           quotes.push({
             isin: sym.isin,
@@ -177,12 +180,12 @@ serve(async (req) => {
             symbol: sym.isin,
             mic: sym.mic,
             name: sym.name,
-            last: dayClose,
-            high: dayHigh,
-            low: dayLow,
-            open: dayOpen,
-            volume: dayVolume,
-            timestamp: lastTimestamp,
+            last: agg.close,
+            high: agg.high,
+            low: agg.low,
+            open: agg.open,
+            volume: agg.volume,
+            timestamp: agg.timestamp,
           });
         }
 
@@ -209,10 +212,6 @@ serve(async (req) => {
 
     console.log(`Processing ${isinPairs.length} ISIN/currency pairs`);
 
-    // Get today's data
-    const today = new Date();
-    const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0)).toISOString();
-
     const quotes: QuoteResult[] = [];
 
     // Batch fetch symbology for all ISINs
@@ -226,30 +225,27 @@ serve(async (req) => {
     for (const sym of (symDataAll || [])) {
       const key = `${sym.isin}:${sym.currency || ""}`;
       symMap.set(key, sym);
-      // Also add without currency for fallback
       if (!symMap.has(sym.isin)) {
         symMap.set(sym.isin, sym);
       }
     }
 
-    // Batch fetch candles for all ISINs
-    const { data: candlesData } = await supabase
-      .from("candles_1min")
-      .select("symbol, bucket, open, high, low, close, volume")
+    // Query trades_normalized directly for all ISINs
+    const { data: tradesData } = await supabase
+      .from("trades_normalized")
+      .select("symbol, price, quantity, trade_time")
       .in("symbol", uniqueIsins)
-      .gte("bucket", startOfDay)
-      .lte("bucket", new Date().toISOString())
-      .order("bucket", { ascending: true });
+      .gte("trade_time", startOfDay)
+      .order("trade_time", { ascending: true });
 
-    const candlesByIsin = new Map<string, any[]>();
-    for (const candle of (candlesData || [])) {
-      const existing = candlesByIsin.get(candle.symbol) || [];
-      existing.push(candle);
-      candlesByIsin.set(candle.symbol, existing);
+    const tradesByIsin = new Map<string, any[]>();
+    for (const trade of (tradesData || [])) {
+      const existing = tradesByIsin.get(trade.symbol) || [];
+      existing.push(trade);
+      tradesByIsin.set(trade.symbol, existing);
     }
 
     for (const pair of isinPairs) {
-      // Get symbology with currency preference
       const symData = symMap.get(`${pair.isin}:${pair.currency}`) || symMap.get(pair.isin);
       
       if (!symData) {
@@ -257,23 +253,12 @@ serve(async (req) => {
         continue;
       }
 
-      const candles = candlesByIsin.get(pair.isin);
-      if (!candles || candles.length === 0) {
-        console.log(`No chart data for ${pair.isin}`);
+      const trades = tradesByIsin.get(pair.isin);
+      const agg = aggregateTrades(trades);
+      if (!agg) {
+        console.log(`No trade data for ${pair.isin}`);
         continue;
       }
-
-      // Sort candles by bucket to ensure correct order
-      const sortedCandles = [...candles].sort((a: any, b: any) => 
-        new Date(a.bucket).getTime() - new Date(b.bucket).getTime()
-      );
-      const dayOpen = sortedCandles[0].open;
-      const dayHigh = Math.max(...sortedCandles.map((c: any) => c.high));
-      const dayLow = Math.min(...sortedCandles.map((c: any) => c.low));
-      const dayClose = sortedCandles[sortedCandles.length - 1].close;
-      const dayVolume = sortedCandles.reduce((sum: number, c: any) => sum + (c.volume || 0), 0);
-      // Use the LAST candle's timestamp (most recent trade time)
-      const lastTimestamp = sortedCandles[sortedCandles.length - 1].bucket;
 
       quotes.push({
         isin: pair.isin,
@@ -281,12 +266,12 @@ serve(async (req) => {
         symbol: pair.isin,
         mic: symData.mic,
         name: symData.name,
-        last: dayClose,
-        high: dayHigh,
-        low: dayLow,
-        open: dayOpen,
-        volume: dayVolume,
-        timestamp: lastTimestamp,
+        last: agg.close,
+        high: agg.high,
+        low: agg.low,
+        open: agg.open,
+        volume: agg.volume,
+        timestamp: agg.timestamp,
       });
     }
 

@@ -9,7 +9,6 @@ const corsHeaders = {
 async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   if (!apiKey) return false;
   
-  // Hash the API key using SubtleCrypto
   const encoder = new TextEncoder();
   const data = encoder.encode(apiKey);
   const hashBuffer = await crypto.subtle.digest('SHA-256', data);
@@ -25,13 +24,57 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   
   if (error || !keyData) return false;
   
-  // Update last_used_at
   await supabase
     .from("api_keys")
     .update({ last_used_at: new Date().toISOString() })
     .eq("id", keyData.id);
   
   return true;
+}
+
+// Aggregate trades into minute candles
+function aggregateToMinuteCandles(trades: any[], intervalMinutes: number): any[] {
+  if (!trades || trades.length === 0) return [];
+  
+  const buckets: Map<string, { open: number; high: number; low: number; close: number; volume: number; timestamp: string; firstTime: number }> = new Map();
+  
+  for (const trade of trades) {
+    const tradeTime = new Date(trade.trade_time);
+    const bucketTime = new Date(
+      Math.floor(tradeTime.getTime() / (intervalMinutes * 60 * 1000)) * intervalMinutes * 60 * 1000
+    );
+    const bucketKey = bucketTime.toISOString();
+    
+    const existing = buckets.get(bucketKey);
+    if (!existing) {
+      buckets.set(bucketKey, {
+        timestamp: bucketKey,
+        open: trade.price,
+        high: trade.price,
+        low: trade.price,
+        close: trade.price,
+        volume: trade.quantity || 0,
+        firstTime: tradeTime.getTime(),
+      });
+    } else {
+      existing.high = Math.max(existing.high, trade.price);
+      existing.low = Math.min(existing.low, trade.price);
+      // Update close if this trade is later
+      if (tradeTime.getTime() > existing.firstTime) {
+        existing.close = trade.price;
+      }
+      // Update open if this trade is earlier
+      if (tradeTime.getTime() < existing.firstTime) {
+        existing.open = trade.price;
+        existing.firstTime = tradeTime.getTime();
+      }
+      existing.volume += trade.quantity || 0;
+    }
+  }
+  
+  return Array.from(buckets.values())
+    .map(({ firstTime, ...rest }) => rest)
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
 serve(async (req) => {
@@ -87,74 +130,31 @@ serve(async (req) => {
 
     // Parse time range
     const intervalMinutes = interval ? parseInt(interval) : 1;
-    // Default startTime to 00:00 UTC of today
     const now = new Date();
     const startTime = from ? new Date(from) : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
-    // If no "to" provided, return everything from startTime to now
     const endTime = to ? new Date(to) : now;
 
-    // Trades use ISIN directly as the symbol column
-    // Query candles_1min directly using ISIN as the symbol
-    const { data: chartData, error: chartError } = await supabase.rpc("get_chart_data", {
-      p_symbol: isin,
-      p_start_time: startTime.toISOString(),
-      p_end_time: endTime.toISOString(),
-    });
+    // Query trades_normalized directly using ISIN as the symbol
+    const { data: tradesData, error: tradesError } = await supabase
+      .from("trades_normalized")
+      .select("price, quantity, trade_time")
+      .eq("symbol", isin)
+      .gte("trade_time", startTime.toISOString())
+      .lte("trade_time", endTime.toISOString())
+      .order("trade_time", { ascending: true });
 
-    if (chartError) {
-      console.error("Error fetching chart data:", chartError);
+    if (tradesError) {
+      console.error("Error fetching trades:", tradesError);
       return new Response(
-        JSON.stringify({ error: "Failed to fetch chart data", details: chartError.message }),
+        JSON.stringify({ error: "Failed to fetch trade data", details: tradesError.message }),
         { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`Found ${chartData?.length || 0} data points for ISIN ${isin}`);
+    console.log(`Found ${tradesData?.length || 0} trades for ISIN ${isin}`);
 
-    // Aggregate data if interval is greater than 1 minute
-    let aggregatedData = chartData || [];
-    
-    if (intervalMinutes > 1 && chartData && chartData.length > 0) {
-      const buckets: Map<string, { open: number; high: number; low: number; close: number; volume: number; timestamp: string }> = new Map();
-      
-      for (const candle of chartData) {
-        const candleTime = new Date(candle.bucket);
-        const bucketTime = new Date(
-          Math.floor(candleTime.getTime() / (intervalMinutes * 60 * 1000)) * intervalMinutes * 60 * 1000
-        );
-        const bucketKey = bucketTime.toISOString();
-        
-        const existing = buckets.get(bucketKey);
-        if (!existing) {
-          buckets.set(bucketKey, {
-            timestamp: bucketKey,
-            open: candle.open,
-            high: candle.high,
-            low: candle.low,
-            close: candle.close,
-            volume: candle.volume,
-          });
-        } else {
-          existing.high = Math.max(existing.high, candle.high);
-          existing.low = Math.min(existing.low, candle.low);
-          existing.close = candle.close;
-          existing.volume += candle.volume;
-        }
-      }
-      
-      aggregatedData = Array.from(buckets.values()).sort(
-        (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-      );
-    } else {
-      aggregatedData = chartData?.map((c: any) => ({
-        timestamp: c.bucket,
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-        volume: c.volume,
-      })) || [];
-    }
+    // Aggregate trades into candles
+    const aggregatedData = aggregateToMinuteCandles(tradesData || [], intervalMinutes);
 
     // Extract last price and timestamp from the most recent data point
     const lastDataPoint = aggregatedData.length > 0 ? aggregatedData[aggregatedData.length - 1] : null;
