@@ -17,8 +17,17 @@ export default function ApiTest() {
   const { toast } = useToast();
   const [copied, setCopied] = useState(false);
 
-  // API Key state
-  const [manualApiKey, setManualApiKey] = useState<string>("");
+  // API Key state - persist in localStorage
+  const [manualApiKey, setManualApiKey] = useState<string>(() => {
+    return localStorage.getItem("tdh_api_key") || "";
+  });
+
+  // Save API key to localStorage when it changes
+  useEffect(() => {
+    if (manualApiKey) {
+      localStorage.setItem("tdh_api_key", manualApiKey);
+    }
+  }, [manualApiKey]);
 
   // Intraday state
   const [intradayIsin, setIntradayIsin] = useState("");

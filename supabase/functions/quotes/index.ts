@@ -159,12 +159,17 @@ serve(async (req) => {
           const candles = candlesByIsin.get(sym.isin);
           if (!candles || candles.length === 0) continue;
 
-          const dayOpen = candles[0].open;
-          const dayHigh = Math.max(...candles.map((c: any) => c.high));
-          const dayLow = Math.min(...candles.map((c: any) => c.low));
-          const dayClose = candles[candles.length - 1].close;
-          const dayVolume = candles.reduce((sum: number, c: any) => sum + (c.volume || 0), 0);
-          const lastTimestamp = candles[candles.length - 1].bucket;
+          // Sort candles by bucket to ensure correct order
+          const sortedCandles = [...candles].sort((a: any, b: any) => 
+            new Date(a.bucket).getTime() - new Date(b.bucket).getTime()
+          );
+          const dayOpen = sortedCandles[0].open;
+          const dayHigh = Math.max(...sortedCandles.map((c: any) => c.high));
+          const dayLow = Math.min(...sortedCandles.map((c: any) => c.low));
+          const dayClose = sortedCandles[sortedCandles.length - 1].close;
+          const dayVolume = sortedCandles.reduce((sum: number, c: any) => sum + (c.volume || 0), 0);
+          // Use the LAST candle's timestamp (most recent trade time)
+          const lastTimestamp = sortedCandles[sortedCandles.length - 1].bucket;
 
           quotes.push({
             isin: sym.isin,
@@ -258,12 +263,17 @@ serve(async (req) => {
         continue;
       }
 
-      const dayOpen = candles[0].open;
-      const dayHigh = Math.max(...candles.map((c: any) => c.high));
-      const dayLow = Math.min(...candles.map((c: any) => c.low));
-      const dayClose = candles[candles.length - 1].close;
-      const dayVolume = candles.reduce((sum: number, c: any) => sum + (c.volume || 0), 0);
-      const lastTimestamp = candles[candles.length - 1].bucket;
+      // Sort candles by bucket to ensure correct order
+      const sortedCandles = [...candles].sort((a: any, b: any) => 
+        new Date(a.bucket).getTime() - new Date(b.bucket).getTime()
+      );
+      const dayOpen = sortedCandles[0].open;
+      const dayHigh = Math.max(...sortedCandles.map((c: any) => c.high));
+      const dayLow = Math.min(...sortedCandles.map((c: any) => c.low));
+      const dayClose = sortedCandles[sortedCandles.length - 1].close;
+      const dayVolume = sortedCandles.reduce((sum: number, c: any) => sum + (c.volume || 0), 0);
+      // Use the LAST candle's timestamp (most recent trade time)
+      const lastTimestamp = sortedCandles[sortedCandles.length - 1].bucket;
 
       quotes.push({
         isin: pair.isin,
