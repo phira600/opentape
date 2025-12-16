@@ -55,7 +55,6 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
 function aggregateTrades(trades: any[] | undefined): { open: number; high: number; low: number; close: number; volume: number; timestamp: string } | null {
   if (!trades || trades.length === 0) return null;
   
-  // Sort by trade_time
   const sorted = [...trades].sort((a, b) => new Date(a.trade_time).getTime() - new Date(b.trade_time).getTime());
   
   return {
@@ -90,9 +89,8 @@ serve(async (req) => {
       );
     }
 
-    // Parse parameters from query string or body
+    // Parse parameters
     let params: Record<string, string> = {};
-    
     if (req.method === "GET") {
       const url = new URL(req.url);
       params = Object.fromEntries(url.searchParams);
@@ -104,7 +102,7 @@ serve(async (req) => {
 
     console.log(`Fetching quotes: isins=${isins}, mic=${mic}`);
 
-    // Parse ISINs with optional currency: "SE0022419784:SEK,GB0000000001:GBP" or just "SE0022419784,GB0000000001"
+    // Parse ISINs with optional currency: "SE0022419784:SEK,GB0000000001:GBP"
     const isinPairs: IsinCurrencyPair[] = [];
     
     if (isins) {
@@ -119,7 +117,6 @@ serve(async (req) => {
       }
     }
 
-    // Get today's data range
     const today = new Date();
     const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0)).toISOString();
 
@@ -140,13 +137,22 @@ serve(async (req) => {
       }
 
       if (micData && micData.length > 0) {
-        const uniqueIsins = [...new Set(micData.map(r => r.isin))];
+        // Build a list of unique ISIN-currency pairs with their MICs
+        const isinMicMap = new Map<string, { mic: string; currency: string; name: string }>();
+        for (const sym of micData) {
+          if (sym.isin) {
+            isinMicMap.set(`${sym.isin}:${sym.currency}`, { mic: sym.mic, currency: sym.currency, name: sym.name });
+          }
+        }
+
+        const uniqueIsins = [...new Set(micData.map(r => r.isin).filter(Boolean))];
         
-        // Query trades_normalized directly
+        // Query trades filtered by the MIC venue
         const { data: tradesData, error: tradesError } = await supabase
           .from("trades_normalized")
-          .select("symbol, price, quantity, trade_time")
+          .select("symbol, price, quantity, trade_time, venue")
           .in("symbol", uniqueIsins)
+          .eq("venue", mic)
           .gte("trade_time", startOfDay)
           .order("trade_time", { ascending: true });
 
@@ -155,10 +161,10 @@ serve(async (req) => {
           return new Response(
             JSON.stringify({ quotes: [], count: 0, error: tradesError.message }),
             { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-          );
+        );
         }
 
-        // Group trades by symbol (ISIN)
+        // Group trades by symbol
         const tradesByIsin = new Map<string, any[]>();
         for (const trade of (tradesData || [])) {
           const existing = tradesByIsin.get(trade.symbol) || [];
@@ -166,7 +172,7 @@ serve(async (req) => {
           tradesByIsin.set(trade.symbol, existing);
         }
 
-        // Build quotes from symbology and grouped trades
+        // Build quotes
         const quotes: QuoteResult[] = [];
         for (const sym of micData) {
           if (!sym.isin) continue;
@@ -214,49 +220,45 @@ serve(async (req) => {
 
     const quotes: QuoteResult[] = [];
 
-    // Batch fetch symbology for all ISINs
-    const uniqueIsins = [...new Set(isinPairs.map(p => p.isin))];
-    const { data: symDataAll } = await supabase
-      .from("symbology")
-      .select("isin, name, currency, mic")
-      .in("isin", uniqueIsins);
-
-    const symMap = new Map<string, any>();
-    for (const sym of (symDataAll || [])) {
-      const key = `${sym.isin}:${sym.currency || ""}`;
-      symMap.set(key, sym);
-      if (!symMap.has(sym.isin)) {
-        symMap.set(sym.isin, sym);
-      }
-    }
-
-    // Query trades_normalized directly for all ISINs
-    const { data: tradesData } = await supabase
-      .from("trades_normalized")
-      .select("symbol, price, quantity, trade_time")
-      .in("symbol", uniqueIsins)
-      .gte("trade_time", startOfDay)
-      .order("trade_time", { ascending: true });
-
-    const tradesByIsin = new Map<string, any[]>();
-    for (const trade of (tradesData || [])) {
-      const existing = tradesByIsin.get(trade.symbol) || [];
-      existing.push(trade);
-      tradesByIsin.set(trade.symbol, existing);
-    }
-
+    // For each ISIN+currency pair, look up the correct MIC and filter trades by venue
     for (const pair of isinPairs) {
-      const symData = symMap.get(`${pair.isin}:${pair.currency}`) || symMap.get(pair.isin);
+      // Look up symbology to get MIC for this ISIN+currency
+      let symQuery = supabase
+        .from("symbology")
+        .select("isin, name, currency, mic")
+        .eq("isin", pair.isin);
+      
+      if (pair.currency) {
+        symQuery = symQuery.eq("currency", pair.currency);
+      }
+      
+      const { data: symData } = await symQuery.limit(1).maybeSingle();
       
       if (!symData) {
-        console.log(`No symbology found for ISIN ${pair.isin}`);
+        console.log(`No symbology found for ISIN ${pair.isin}:${pair.currency}`);
         continue;
       }
 
-      const trades = tradesByIsin.get(pair.isin);
-      const agg = aggregateTrades(trades);
+      const targetMic = symData.mic;
+      console.log(`ISIN ${pair.isin}:${pair.currency} -> MIC ${targetMic}`);
+
+      // Query trades filtered by venue (MIC)
+      let tradesQuery = supabase
+        .from("trades_normalized")
+        .select("symbol, price, quantity, trade_time, venue")
+        .eq("symbol", pair.isin)
+        .gte("trade_time", startOfDay)
+        .order("trade_time", { ascending: true });
+
+      if (targetMic) {
+        tradesQuery = tradesQuery.eq("venue", targetMic);
+      }
+
+      const { data: tradesData } = await tradesQuery;
+      
+      const agg = aggregateTrades(tradesData || undefined);
       if (!agg) {
-        console.log(`No trade data for ${pair.isin}`);
+        console.log(`No trade data for ${pair.isin} at MIC ${targetMic}`);
         continue;
       }
 
