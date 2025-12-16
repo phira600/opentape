@@ -500,7 +500,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                     variant="outline"
                     size="sm"
                     onClick={() => handleManualRun(job)}
-                    disabled={runningId === job.id || !job.is_enabled}
+                    disabled={runningId === job.id}
                   >
                     {runningId === job.id ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
@@ -626,7 +626,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                     variant="outline"
                     size="sm"
                     onClick={() => handleRunCronJob(cronJob)}
-                    disabled={runningCronId === cronJob.id || !cronJob.is_enabled}
+                    disabled={runningCronId === cronJob.id}
                   >
                     {runningCronId === cronJob.id ? (
                       <Loader2 className="h-4 w-4 animate-spin" />
