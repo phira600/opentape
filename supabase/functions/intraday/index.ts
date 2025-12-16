@@ -32,11 +32,13 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   return true;
 }
 
-// Aggregate 1-minute candles into larger intervals
-function aggregateCandles(candles: any[], intervalMinutes: number): any[] {
-  if (!candles || candles.length === 0) return [];
-  if (intervalMinutes === 1) {
-    return candles.map(c => ({
+// Aggregate data into candles
+function aggregateToCandles(items: any[], intervalMinutes: number, isCandles: boolean): any[] {
+  if (!items || items.length === 0) return [];
+  
+  // If already 1-min candles and interval is 1, just format
+  if (isCandles && intervalMinutes === 1) {
+    return items.map(c => ({
       timestamp: c.bucket,
       open: Number(c.open),
       high: Number(c.high),
@@ -48,37 +50,41 @@ function aggregateCandles(candles: any[], intervalMinutes: number): any[] {
   
   const buckets: Map<string, { open: number; high: number; low: number; close: number; volume: number; timestamp: string; firstTime: number }> = new Map();
   
-  for (const candle of candles) {
-    const candleTime = new Date(candle.bucket);
+  for (const item of items) {
+    const itemTime = new Date(isCandles ? item.bucket : item.trade_time);
     const bucketTime = new Date(
-      Math.floor(candleTime.getTime() / (intervalMinutes * 60 * 1000)) * intervalMinutes * 60 * 1000
+      Math.floor(itemTime.getTime() / (intervalMinutes * 60 * 1000)) * intervalMinutes * 60 * 1000
     );
     const bucketKey = bucketTime.toISOString();
+    
+    const price = isCandles ? Number(item.open) : Number(item.price);
+    const high = isCandles ? Number(item.high) : Number(item.price);
+    const low = isCandles ? Number(item.low) : Number(item.price);
+    const close = isCandles ? Number(item.close) : Number(item.price);
+    const volume = isCandles ? Number(item.volume) : Number(item.quantity || 0);
     
     const existing = buckets.get(bucketKey);
     if (!existing) {
       buckets.set(bucketKey, {
         timestamp: bucketKey,
-        open: Number(candle.open),
-        high: Number(candle.high),
-        low: Number(candle.low),
-        close: Number(candle.close),
-        volume: Number(candle.volume),
-        firstTime: candleTime.getTime(),
+        open: price,
+        high: high,
+        low: low,
+        close: close,
+        volume: volume,
+        firstTime: itemTime.getTime(),
       });
     } else {
-      existing.high = Math.max(existing.high, Number(candle.high));
-      existing.low = Math.min(existing.low, Number(candle.low));
-      // Update close if this candle is later
-      if (candleTime.getTime() > existing.firstTime) {
-        existing.close = Number(candle.close);
+      existing.high = Math.max(existing.high, high);
+      existing.low = Math.min(existing.low, low);
+      if (itemTime.getTime() > existing.firstTime) {
+        existing.close = close;
       }
-      // Update open if this candle is earlier  
-      if (candleTime.getTime() < existing.firstTime) {
-        existing.open = Number(candle.open);
-        existing.firstTime = candleTime.getTime();
+      if (itemTime.getTime() < existing.firstTime) {
+        existing.open = price;
+        existing.firstTime = itemTime.getTime();
       }
-      existing.volume += Number(candle.volume);
+      existing.volume += volume;
     }
   }
   
@@ -109,9 +115,8 @@ serve(async (req) => {
       );
     }
 
-    // Parse parameters from query string or body
+    // Parse parameters
     let params: Record<string, string> = {};
-    
     if (req.method === "GET") {
       const url = new URL(req.url);
       params = Object.fromEntries(url.searchParams);
@@ -121,7 +126,6 @@ serve(async (req) => {
 
     const { isin, currency, interval, from, to } = params;
 
-    // Validate required parameters
     if (!isin) {
       return new Response(
         JSON.stringify({ error: "Missing required parameter: isin" }),
@@ -138,18 +142,20 @@ serve(async (req) => {
 
     console.log(`Fetching intraday data for ISIN=${isin}, currency=${currency}`);
 
-    // Parse time range
     const intervalMinutes = interval ? parseInt(interval) : 1;
     const now = new Date();
     const startTime = from ? new Date(from) : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
     const endTime = to ? new Date(to) : now;
 
-    // Query candles_1min materialized view (pre-aggregated data)
+    // Try candles_1min first
     const pageSize = 1000;
-    let allCandles: any[] = [];
+    let allData: any[] = [];
     let page = 0;
     let hasMore = true;
+    let usedCandles = false;
+    let venue: string | null = null;
 
+    // First, try candles_1min view
     while (hasMore) {
       const { data: candlesPage, error: candlesError } = await supabase
         .from("candles_1min")
@@ -161,40 +167,76 @@ serve(async (req) => {
         .range(page * pageSize, (page + 1) * pageSize - 1);
 
       if (candlesError) {
-        console.error("Error fetching candles:", candlesError);
-        return new Response(
-          JSON.stringify({ error: "Failed to fetch candle data", details: candlesError.message }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        console.log("Candles query error, will fallback to trades:", candlesError.message);
+        break;
       }
 
       if (candlesPage && candlesPage.length > 0) {
-        allCandles = allCandles.concat(candlesPage);
+        allData = allData.concat(candlesPage);
+        venue = candlesPage[0].venue;
         hasMore = candlesPage.length === pageSize;
         page++;
+        usedCandles = true;
       } else {
         hasMore = false;
       }
 
-      // Safety limit: max 100 pages (100,000 candles)
       if (page >= 100) {
-        console.log("Reached max pagination limit");
         hasMore = false;
       }
     }
 
-    console.log(`Found ${allCandles.length} candles for ISIN ${isin}`);
+    // If no candles data, fallback to trades_normalized
+    if (allData.length === 0) {
+      console.log("No candles data, falling back to trades_normalized");
+      page = 0;
+      hasMore = true;
 
-    // Aggregate candles to requested interval
-    const aggregatedData = aggregateCandles(allCandles, intervalMinutes);
+      while (hasMore) {
+        const { data: tradesPage, error: tradesError } = await supabase
+          .from("trades_normalized")
+          .select("price, quantity, trade_time, venue")
+          .eq("symbol", isin)
+          .gte("trade_time", startTime.toISOString())
+          .lte("trade_time", endTime.toISOString())
+          .order("trade_time", { ascending: true })
+          .range(page * pageSize, (page + 1) * pageSize - 1);
 
-    // Extract last price and timestamp from the most recent data point
+        if (tradesError) {
+          console.error("Trades query error:", tradesError);
+          return new Response(
+            JSON.stringify({ error: "Failed to fetch data", details: tradesError.message }),
+            { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          );
+        }
+
+        if (tradesPage && tradesPage.length > 0) {
+          allData = allData.concat(tradesPage);
+          if (!venue) venue = tradesPage[0].venue;
+          hasMore = tradesPage.length === pageSize;
+          page++;
+        } else {
+          hasMore = false;
+        }
+
+        if (page >= 50) {
+          console.log("Reached max pagination limit for trades");
+          hasMore = false;
+        }
+      }
+      usedCandles = false;
+    }
+
+    console.log(`Found ${allData.length} ${usedCandles ? 'candles' : 'trades'} for ISIN ${isin}`);
+
+    // Aggregate to requested interval
+    const aggregatedData = aggregateToCandles(allData, intervalMinutes, usedCandles);
+
     const lastDataPoint = aggregatedData.length > 0 ? aggregatedData[aggregatedData.length - 1] : null;
     const last = lastDataPoint ? lastDataPoint.close : null;
     const lastTimestamp = lastDataPoint ? lastDataPoint.timestamp : null;
-    const venue = allCandles.length > 0 ? allCandles[0].venue : null;
 
-    console.log(`Returning ${aggregatedData.length} data points`);
+    console.log(`Returning ${aggregatedData.length} data points (source: ${usedCandles ? 'candles_1min' : 'trades_normalized'})`);
 
     return new Response(
       JSON.stringify({
@@ -207,6 +249,7 @@ serve(async (req) => {
         last,
         lastTimestamp,
         data: aggregatedData,
+        _source: usedCandles ? 'candles_1min' : 'trades_normalized',
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
