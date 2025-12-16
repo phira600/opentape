@@ -29,51 +29,16 @@ export function StatsCards() {
   });
 
   const fetchStats = async () => {
-    // Get start of today in UTC
     const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-    const todayIso = today.toISOString();
+    const todayStr = today.toISOString().split('T')[0]; // YYYY-MM-DD
 
-    // Get total trades count for today using exact count
-    const { count: tradesCount, error: tradesError } = await supabase
-      .from("trades_normalized")
-      .select("*", { count: "exact", head: true })
-      .gte("trade_time", todayIso);
-
-    if (tradesError) {
-      console.error("Error fetching trades count:", tradesError);
-    }
-
-    // Get unique symbols from today's trades
-    // Using a paginated approach to get all unique symbols
-    let allSymbols: string[] = [];
-    let allVenues: string[] = [];
-    let offset = 0;
-    const batchSize = 1000;
-    let hasMore = true;
-    
-    while (hasMore) {
-      const { data: tradesData, error } = await supabase
-        .from("trades_normalized")
-        .select("symbol, venue")
-        .gte("trade_time", todayIso)
-        .range(offset, offset + batchSize - 1);
-      
-      if (error || !tradesData || tradesData.length === 0) {
-        hasMore = false;
-      } else {
-        allSymbols = [...allSymbols, ...tradesData.map(t => t.symbol)];
-        allVenues = [...allVenues, ...tradesData.map(t => t.venue)];
-        offset += batchSize;
-        hasMore = tradesData.length === batchSize;
-      }
-      
-      // Limit to 10 batches to avoid infinite loops
-      if (offset >= 10000) hasMore = false;
-    }
-
-    const uniqueSymbols = new Set(allSymbols);
-    const uniqueVenues = new Set(allVenues);
+    // OPTIMIZED: Use pre-aggregated daily_stats table (single row read vs full table scan)
+    // Using rpc to query daily_stats since types may not be updated yet
+    const { data: dailyStats } = await supabase
+      .from("daily_stats" as any)
+      .select("total_trades, unique_symbols, unique_venues, last_updated")
+      .eq("date", todayStr)
+      .maybeSingle() as any;
 
     // Get last fetch time
     const { data: lastJob } = await supabase
@@ -91,6 +56,42 @@ export function StatsCards() {
       .order("refreshed_at", { ascending: false })
       .limit(1)
       .single();
+
+    // If daily_stats exists, use it (fast path)
+    if (dailyStats) {
+      setStats({
+        totalTrades: Number(dailyStats.total_trades) || 0,
+        totalSymbols: dailyStats.unique_symbols || 0,
+        totalVenues: dailyStats.unique_venues || 0,
+        lastFetch: lastJob?.last_run_at || null,
+        candlesRefresh: {
+          refreshedAt: candlesLog?.refreshed_at || null,
+          rowsCount: candlesLog?.rows_count || null,
+          durationMs: candlesLog?.refresh_duration_ms || null,
+        },
+      });
+      return;
+    }
+
+    // Fallback: Query trades table directly (slower, but needed if daily_stats not populated)
+    console.log("daily_stats not available, falling back to trades query");
+    today.setUTCHours(0, 0, 0, 0);
+    const todayIso = today.toISOString();
+
+    const { count: tradesCount } = await supabase
+      .from("trades_normalized")
+      .select("*", { count: "exact", head: true })
+      .gte("trade_time", todayIso);
+
+    // Get a sample to count unique values (limit to avoid timeout)
+    const { data: sampleData } = await supabase
+      .from("trades_normalized")
+      .select("symbol, venue")
+      .gte("trade_time", todayIso)
+      .limit(5000);
+
+    const uniqueSymbols = new Set(sampleData?.map(t => t.symbol) || []);
+    const uniqueVenues = new Set(sampleData?.map(t => t.venue) || []);
 
     setStats({
       totalTrades: tradesCount || 0,

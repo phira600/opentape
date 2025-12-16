@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import type { Json } from "@/integrations/supabase/types";
 
@@ -16,49 +16,41 @@ export interface Symbol {
   raw_data: Json | null;
 }
 
-export function useSymbology() {
-  const [symbols, setSymbols] = useState<Symbol[]>([]);
-  const [uniqueSymbolNames, setUniqueSymbolNames] = useState<string[]>([]);
-  const [venues, setVenues] = useState<string[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
-
-  const fetchSymbology = async () => {
-    setIsLoading(true);
+async function fetchAllSymbols(): Promise<Symbol[]> {
+  const allSymbols: Symbol[] = [];
+  const pageSize = 1000;
+  let page = 0;
+  let hasMore = true;
+  
+  while (hasMore) {
+    const { data, error } = await supabase
+      .from("symbology")
+      .select("id, symbol, isin, name, venue, currency, source, mic, segment, tick_table, raw_data")
+      .order("symbol", { ascending: true })
+      .range(page * pageSize, (page + 1) * pageSize - 1);
     
-    // Fetch all symbols using pagination (Supabase default limit is 1000)
-    const allSymbols: Symbol[] = [];
-    const pageSize = 1000;
-    let page = 0;
-    let hasMore = true;
-    
-    while (hasMore) {
-      const { data, error } = await supabase
-        .from("symbology")
-        .select("id, symbol, isin, name, venue, currency, source, mic, segment, tick_table, raw_data")
-        .order("symbol", { ascending: true })
-        .range(page * pageSize, (page + 1) * pageSize - 1);
-      
-      if (error || !data || data.length === 0) {
-        hasMore = false;
-      } else {
-        allSymbols.push(...data);
-        hasMore = data.length === pageSize;
-        page++;
-      }
+    if (error || !data || data.length === 0) {
+      hasMore = false;
+    } else {
+      allSymbols.push(...data);
+      hasMore = data.length === pageSize;
+      page++;
     }
-    
-    setSymbols(allSymbols);
-    const uniqueNames = [...new Set(allSymbols.map((s) => s.symbol))].sort();
-    // Use MIC as the venue for filtering
-    const uniqueVenues = [...new Set(allSymbols.map((s) => s.mic).filter(Boolean))].sort() as string[];
-    setUniqueSymbolNames(uniqueNames);
-    setVenues(uniqueVenues);
-    setIsLoading(false);
-  };
+  }
+  
+  return allSymbols;
+}
 
-  useEffect(() => {
-    fetchSymbology();
-  }, []);
+export function useSymbology() {
+  const { data: symbols = [], isLoading, refetch } = useQuery({
+    queryKey: ['symbology'],
+    queryFn: fetchAllSymbols,
+    staleTime: 5 * 60 * 1000, // 5 minutes - symbology rarely changes
+    gcTime: 30 * 60 * 1000,   // 30 minutes cache retention
+  });
 
-  return { symbols, uniqueSymbolNames, venues, isLoading, refetch: fetchSymbology };
+  const uniqueSymbolNames = [...new Set(symbols.map((s) => s.symbol))].sort();
+  const venues = [...new Set(symbols.map((s) => s.mic).filter(Boolean))].sort() as string[];
+
+  return { symbols, uniqueSymbolNames, venues, isLoading, refetch };
 }

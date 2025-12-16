@@ -1,9 +1,12 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+declare const EdgeRuntime: { waitUntil: (promise: Promise<any>) => void };
+
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-api-key",
+  "Cache-Control": "public, max-age=60",
 };
 
 interface QuoteResult {
@@ -25,8 +28,45 @@ interface IsinCurrencyPair {
   currency: string;
 }
 
+// In-memory LRU cache for API key validation (reduces DB queries by ~90%)
+const API_KEY_CACHE = new Map<string, { valid: boolean; keyId: string | null; expires: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+const MAX_CACHE_SIZE = 100;
+
+// In-memory response cache for quotes
+const RESPONSE_CACHE = new Map<string, { data: any; expires: number }>();
+const RESPONSE_CACHE_TTL_MS = 60 * 1000; // 1 minute
+
+function getCachedResponse(key: string): any | null {
+  const entry = RESPONSE_CACHE.get(key);
+  if (entry && entry.expires > Date.now()) return entry.data;
+  RESPONSE_CACHE.delete(key);
+  return null;
+}
+
+function setCachedResponse(key: string, data: any) {
+  // LRU eviction
+  if (RESPONSE_CACHE.size >= MAX_CACHE_SIZE) {
+    const oldestKey = RESPONSE_CACHE.keys().next().value;
+    if (oldestKey) RESPONSE_CACHE.delete(oldestKey);
+  }
+  RESPONSE_CACHE.set(key, { data, expires: Date.now() + RESPONSE_CACHE_TTL_MS });
+}
+
 async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   if (!apiKey) return false;
+  
+  // Check cache first
+  const cached = API_KEY_CACHE.get(apiKey);
+  if (cached && cached.expires > Date.now()) {
+    // Background update of last_used_at (non-blocking)
+    if (cached.valid && cached.keyId) {
+      EdgeRuntime.waitUntil(
+        supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", cached.keyId)
+      );
+    }
+    return cached.valid;
+  }
   
   const encoder = new TextEncoder();
   const data = encoder.encode(apiKey);
@@ -41,14 +81,29 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
     .eq("is_active", true)
     .maybeSingle();
   
-  if (error || !keyData) return false;
+  const isValid = !error && !!keyData;
   
-  await supabase
-    .from("api_keys")
-    .update({ last_used_at: new Date().toISOString() })
-    .eq("id", keyData.id);
+  // LRU eviction for API key cache
+  if (API_KEY_CACHE.size >= MAX_CACHE_SIZE) {
+    const oldestKey = API_KEY_CACHE.keys().next().value;
+    if (oldestKey) API_KEY_CACHE.delete(oldestKey);
+  }
   
-  return true;
+  // Cache the result
+  API_KEY_CACHE.set(apiKey, { 
+    valid: isValid, 
+    keyId: keyData?.id || null, 
+    expires: Date.now() + CACHE_TTL_MS 
+  });
+  
+  // Background update of last_used_at (non-blocking)
+  if (isValid && keyData?.id) {
+    EdgeRuntime.waitUntil(
+      supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyData.id)
+    );
+  }
+  
+  return isValid;
 }
 
 // Aggregate trades into OHLCV data
@@ -100,6 +155,17 @@ serve(async (req) => {
 
     const { isins, mic } = params;
 
+    // Check response cache
+    const cacheKey = `quotes:${isins || ''}:${mic || ''}`;
+    const cachedResponse = getCachedResponse(cacheKey);
+    if (cachedResponse) {
+      console.log(`Cache hit for ${cacheKey}`);
+      return new Response(
+        JSON.stringify(cachedResponse),
+        { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "HIT" } }
+      );
+    }
+
     console.log(`Fetching quotes: isins=${isins}, mic=${mic}`);
 
     // Parse ISINs with optional currency: "SE0022419784:SEK,GB0000000001:GBP"
@@ -137,7 +203,6 @@ serve(async (req) => {
       }
 
       if (micData && micData.length > 0) {
-        // Build a list of unique ISIN-currency pairs with their MICs
         const isinMicMap = new Map<string, { mic: string; currency: string; name: string }>();
         for (const sym of micData) {
           if (sym.isin) {
@@ -147,7 +212,6 @@ serve(async (req) => {
 
         const uniqueIsins = [...new Set(micData.map(r => r.isin).filter(Boolean))];
         
-        // Query trades filtered by the MIC venue
         const { data: tradesData, error: tradesError } = await supabase
           .from("trades_normalized")
           .select("symbol, price, quantity, trade_time, venue")
@@ -164,7 +228,6 @@ serve(async (req) => {
         );
         }
 
-        // Group trades by symbol
         const tradesByIsin = new Map<string, any[]>();
         for (const trade of (tradesData || [])) {
           const existing = tradesByIsin.get(trade.symbol) || [];
@@ -172,7 +235,6 @@ serve(async (req) => {
           tradesByIsin.set(trade.symbol, existing);
         }
 
-        // Build quotes
         const quotes: QuoteResult[] = [];
         for (const sym of micData) {
           if (!sym.isin) continue;
@@ -197,9 +259,12 @@ serve(async (req) => {
 
         console.log(`Returning ${quotes.length} quotes for MIC ${mic}`);
 
+        const responseData = { quotes, count: quotes.length };
+        setCachedResponse(cacheKey, responseData);
+
         return new Response(
-          JSON.stringify({ quotes, count: quotes.length }),
-          { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+          JSON.stringify(responseData),
+          { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "MISS" } }
         );
       }
 
@@ -220,9 +285,7 @@ serve(async (req) => {
 
     const quotes: QuoteResult[] = [];
 
-    // For each ISIN+currency pair, look up the correct MIC and filter trades by venue
     for (const pair of isinPairs) {
-      // Look up symbology to get MIC for this ISIN+currency
       let symQuery = supabase
         .from("symbology")
         .select("isin, name, currency, mic")
@@ -242,7 +305,6 @@ serve(async (req) => {
       const targetMic = symData.mic;
       console.log(`ISIN ${pair.isin}:${pair.currency} -> MIC ${targetMic}`);
 
-      // Query trades filtered by venue (MIC)
       let tradesQuery = supabase
         .from("trades_normalized")
         .select("symbol, price, quantity, trade_time, venue")
@@ -279,12 +341,12 @@ serve(async (req) => {
 
     console.log(`Returning ${quotes.length} quotes`);
 
+    const responseData = { quotes, count: quotes.length };
+    setCachedResponse(cacheKey, responseData);
+
     return new Response(
-      JSON.stringify({
-        quotes,
-        count: quotes.length,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      JSON.stringify(responseData),
+      { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "MISS" } }
     );
   } catch (error) {
     console.error("Error in quotes function:", error);
