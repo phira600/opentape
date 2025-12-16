@@ -142,22 +142,38 @@ serve(async (req) => {
 
     console.log(`Fetching intraday data for ISIN=${isin}, currency=${currency}`);
 
+    // Look up the correct MIC (venue) from symbology based on ISIN + currency
+    const { data: symbologyData, error: symbologyError } = await supabase
+      .from("symbology")
+      .select("mic, venue, symbol, name")
+      .eq("isin", isin)
+      .eq("currency", currency)
+      .limit(1)
+      .maybeSingle();
+
+    if (symbologyError) {
+      console.error("Symbology lookup error:", symbologyError);
+    }
+
+    const mic = symbologyData?.mic || null;
+    const symbolName = symbologyData?.name || null;
+    console.log(`Symbology lookup: ISIN=${isin}, currency=${currency} -> MIC=${mic}`);
+
     const intervalMinutes = interval ? parseInt(interval) : 1;
     const now = new Date();
     const startTime = from ? new Date(from) : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
     const endTime = to ? new Date(to) : now;
 
-    // Try candles_1min first
     const pageSize = 1000;
     let allData: any[] = [];
     let page = 0;
     let hasMore = true;
     let usedCandles = false;
-    let venue: string | null = null;
+    let venueUsed: string | null = mic;
 
-    // First, try candles_1min view
+    // First, try candles_1min view (filtered by MIC if available)
     while (hasMore) {
-      const { data: candlesPage, error: candlesError } = await supabase
+      let query = supabase
         .from("candles_1min")
         .select("bucket, open, high, low, close, volume, venue")
         .eq("symbol", isin)
@@ -166,6 +182,13 @@ serve(async (req) => {
         .order("bucket", { ascending: true })
         .range(page * pageSize, (page + 1) * pageSize - 1);
 
+      // Filter by MIC/venue if we have it
+      if (mic) {
+        query = query.eq("venue", mic);
+      }
+
+      const { data: candlesPage, error: candlesError } = await query;
+
       if (candlesError) {
         console.log("Candles query error, will fallback to trades:", candlesError.message);
         break;
@@ -173,7 +196,7 @@ serve(async (req) => {
 
       if (candlesPage && candlesPage.length > 0) {
         allData = allData.concat(candlesPage);
-        venue = candlesPage[0].venue;
+        if (!venueUsed) venueUsed = candlesPage[0].venue;
         hasMore = candlesPage.length === pageSize;
         page++;
         usedCandles = true;
@@ -186,14 +209,14 @@ serve(async (req) => {
       }
     }
 
-    // If no candles data, fallback to trades_normalized
+    // If no candles data, fallback to trades_normalized (filtered by MIC/venue)
     if (allData.length === 0) {
       console.log("No candles data, falling back to trades_normalized");
       page = 0;
       hasMore = true;
 
       while (hasMore) {
-        const { data: tradesPage, error: tradesError } = await supabase
+        let query = supabase
           .from("trades_normalized")
           .select("price, quantity, trade_time, venue")
           .eq("symbol", isin)
@@ -201,6 +224,13 @@ serve(async (req) => {
           .lte("trade_time", endTime.toISOString())
           .order("trade_time", { ascending: true })
           .range(page * pageSize, (page + 1) * pageSize - 1);
+
+        // Filter by MIC/venue if we have it
+        if (mic) {
+          query = query.eq("venue", mic);
+        }
+
+        const { data: tradesPage, error: tradesError } = await query;
 
         if (tradesError) {
           console.error("Trades query error:", tradesError);
@@ -212,7 +242,7 @@ serve(async (req) => {
 
         if (tradesPage && tradesPage.length > 0) {
           allData = allData.concat(tradesPage);
-          if (!venue) venue = tradesPage[0].venue;
+          if (!venueUsed) venueUsed = tradesPage[0].venue;
           hasMore = tradesPage.length === pageSize;
           page++;
         } else {
@@ -227,7 +257,7 @@ serve(async (req) => {
       usedCandles = false;
     }
 
-    console.log(`Found ${allData.length} ${usedCandles ? 'candles' : 'trades'} for ISIN ${isin}`);
+    console.log(`Found ${allData.length} ${usedCandles ? 'candles' : 'trades'} for ISIN ${isin} (MIC: ${mic || 'all'})`);
 
     // Aggregate to requested interval
     const aggregatedData = aggregateToCandles(allData, intervalMinutes, usedCandles);
@@ -242,7 +272,9 @@ serve(async (req) => {
       JSON.stringify({
         isin,
         currency,
-        venue,
+        mic,
+        venue: venueUsed,
+        name: symbolName,
         interval: intervalMinutes,
         from: startTime.toISOString(),
         to: endTime.toISOString(),
