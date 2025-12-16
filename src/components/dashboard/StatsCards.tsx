@@ -1,13 +1,18 @@
 import { useEffect, useState } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Database, TrendingUp, Activity, Clock } from "lucide-react";
+import { Database, TrendingUp, Activity, Clock, RefreshCw } from "lucide-react";
 
 interface Stats {
   totalTrades: number;
   totalSymbols: number;
   totalVenues: number;
   lastFetch: string | null;
+  candlesRefresh: {
+    refreshedAt: string | null;
+    rowsCount: number | null;
+    durationMs: number | null;
+  };
 }
 
 export function StatsCards() {
@@ -16,6 +21,11 @@ export function StatsCards() {
     totalSymbols: 0,
     totalVenues: 0,
     lastFetch: null,
+    candlesRefresh: {
+      refreshedAt: null,
+      rowsCount: null,
+      durationMs: null,
+    },
   });
 
   const fetchStats = async () => {
@@ -73,11 +83,25 @@ export function StatsCards() {
       .limit(1)
       .single();
 
+    // Get latest candles refresh info
+    const { data: candlesLog } = await supabase
+      .from("mv_refresh_log")
+      .select("refreshed_at, rows_count, refresh_duration_ms")
+      .eq("view_name", "candles_1min")
+      .order("refreshed_at", { ascending: false })
+      .limit(1)
+      .single();
+
     setStats({
       totalTrades: tradesCount || 0,
       totalSymbols: uniqueSymbols.size,
       totalVenues: uniqueVenues.size,
       lastFetch: lastJob?.last_run_at || null,
+      candlesRefresh: {
+        refreshedAt: candlesLog?.refreshed_at || null,
+        rowsCount: candlesLog?.rows_count || null,
+        durationMs: candlesLog?.refresh_duration_ms || null,
+      },
     });
   };
 
@@ -102,7 +126,7 @@ export function StatsCards() {
   };
 
   return (
-    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
+    <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
           <CardTitle className="text-sm font-medium">Total Trades</CardTitle>
@@ -144,6 +168,21 @@ export function StatsCards() {
         <CardContent>
           <div className="text-2xl font-bold">{formatTime(stats.lastFetch)}</div>
           <p className="text-xs text-muted-foreground">Most recent run</p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
+          <CardTitle className="text-sm font-medium">Candles Refresh</CardTitle>
+          <RefreshCw className="h-4 w-4 text-muted-foreground" />
+        </CardHeader>
+        <CardContent>
+          <div className="text-2xl font-bold">{formatTime(stats.candlesRefresh.refreshedAt)}</div>
+          <p className="text-xs text-muted-foreground">
+            {stats.candlesRefresh.rowsCount !== null 
+              ? `${formatNumber(stats.candlesRefresh.rowsCount)} rows` 
+              : "No refresh yet"}
+          </p>
         </CardContent>
       </Card>
     </div>
