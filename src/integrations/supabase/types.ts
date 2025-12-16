@@ -367,10 +367,10 @@ export type Database = {
       cleanup_old_trades: { Args: never; Returns: number }
       get_chart_data: {
         Args: {
+          p_currency?: string
           p_end_time?: string
           p_start_time?: string
           p_symbol: string
-          p_venue?: string
         }
         Returns: {
           bucket: string
