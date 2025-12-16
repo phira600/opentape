@@ -134,27 +134,49 @@ serve(async (req) => {
     const startTime = from ? new Date(from) : new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
     const endTime = to ? new Date(to) : now;
 
-    // Query trades_normalized directly using ISIN as the symbol
-    const { data: tradesData, error: tradesError } = await supabase
-      .from("trades_normalized")
-      .select("price, quantity, trade_time")
-      .eq("symbol", isin)
-      .gte("trade_time", startTime.toISOString())
-      .lte("trade_time", endTime.toISOString())
-      .order("trade_time", { ascending: true });
+    // Paginate through all trades to avoid the 1000-row default limit
+    const pageSize = 1000;
+    let allTrades: any[] = [];
+    let page = 0;
+    let hasMore = true;
 
-    if (tradesError) {
-      console.error("Error fetching trades:", tradesError);
-      return new Response(
-        JSON.stringify({ error: "Failed to fetch trade data", details: tradesError.message }),
-        { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    while (hasMore) {
+      const { data: tradesPage, error: tradesError } = await supabase
+        .from("trades_normalized")
+        .select("price, quantity, trade_time")
+        .eq("symbol", isin)
+        .gte("trade_time", startTime.toISOString())
+        .lte("trade_time", endTime.toISOString())
+        .order("trade_time", { ascending: true })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (tradesError) {
+        console.error("Error fetching trades:", tradesError);
+        return new Response(
+          JSON.stringify({ error: "Failed to fetch trade data", details: tradesError.message }),
+          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      if (tradesPage && tradesPage.length > 0) {
+        allTrades = allTrades.concat(tradesPage);
+        hasMore = tradesPage.length === pageSize;
+        page++;
+      } else {
+        hasMore = false;
+      }
+
+      // Safety limit: max 50 pages (50,000 trades)
+      if (page >= 50) {
+        console.log("Reached max pagination limit");
+        hasMore = false;
+      }
     }
 
-    console.log(`Found ${tradesData?.length || 0} trades for ISIN ${isin}`);
+    console.log(`Found ${allTrades.length} trades for ISIN ${isin}`);
 
     // Aggregate trades into candles
-    const aggregatedData = aggregateToMinuteCandles(tradesData || [], intervalMinutes);
+    const aggregatedData = aggregateToMinuteCandles(allTrades, intervalMinutes);
 
     // Extract last price and timestamp from the most recent data point
     const lastDataPoint = aggregatedData.length > 0 ? aggregatedData[aggregatedData.length - 1] : null;
