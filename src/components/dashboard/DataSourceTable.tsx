@@ -378,6 +378,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Type</TableHead>
+              <TableHead>Description</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last Run</TableHead>
               <TableHead>Schedule</TableHead>
@@ -391,6 +392,9 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                 <TableCell className="font-medium">{job.name}</TableCell>
                 <TableCell>
                   <Badge variant="outline">{job.source_type.toUpperCase()}</Badge>
+                </TableCell>
+                <TableCell>
+                  <span className="text-sm text-muted-foreground">Trade data source</span>
                 </TableCell>
                 <TableCell>{getStatusBadge(job)}</TableCell>
                 <TableCell>
@@ -518,6 +522,9 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                   </Badge>
                 </TableCell>
                 <TableCell>
+                  <span className="text-sm text-muted-foreground">{cronJob.description}</span>
+                </TableCell>
+                <TableCell>
                   {cronJob.last_status === "success" ? (
                     <Badge variant="default" className="bg-green-500">
                       <CheckCircle2 className="h-3 w-3 mr-1" />
@@ -539,7 +546,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                       {formatDistanceToNow(new Date(cronJob.last_run_at), { addSuffix: true })}
                     </span>
                   ) : (
-                    <span className="text-sm text-muted-foreground">{cronJob.description}</span>
+                    <span className="text-sm text-muted-foreground">Never</span>
                   )}
                 </TableCell>
                 <TableCell>

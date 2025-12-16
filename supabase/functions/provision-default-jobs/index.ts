@@ -50,16 +50,6 @@ const DEFAULT_JOBS: DefaultJob[] = [
     run_end_hour: 21,
   },
   {
-    name: 'CBOE SIS Symbology',
-    source_url: 'https://www.batstrading.co.uk/sis/market_data/symbol_listing/csv/',
-    source_type: 'cboe_sis',
-    is_enabled: true,
-    fetch_interval_seconds: 86400, // Daily refresh
-    run_days: WEEKDAYS,
-    run_start_hour: 8,
-    run_end_hour: 8, // Only runs at 08:00
-  },
-  {
     name: 'Nasdaq Nordic',
     source_url: 'https://tradereports.nasdaq.com/shares/trade-reports/post-trade',
     source_type: 'nasdaq',
