@@ -128,6 +128,7 @@ export type Database = {
           last_run_at: string | null
           last_status: string | null
           name: string
+          retention_days: number | null
           schedule: string
           updated_at: string
         }
@@ -140,6 +141,7 @@ export type Database = {
           last_run_at?: string | null
           last_status?: string | null
           name: string
+          retention_days?: number | null
           schedule?: string
           updated_at?: string
         }
@@ -152,6 +154,7 @@ export type Database = {
           last_run_at?: string | null
           last_status?: string | null
           name?: string
+          retention_days?: number | null
           schedule?: string
           updated_at?: string
         }
@@ -167,6 +170,9 @@ export type Database = {
           last_run_at: string | null
           last_status: string | null
           name: string
+          run_days: string[] | null
+          run_end_hour: number | null
+          run_start_hour: number | null
           source_type: string
           source_url: string
           updated_at: string
@@ -180,6 +186,9 @@ export type Database = {
           last_run_at?: string | null
           last_status?: string | null
           name: string
+          run_days?: string[] | null
+          run_end_hour?: number | null
+          run_start_hour?: number | null
           source_type: string
           source_url: string
           updated_at?: string
@@ -193,6 +202,9 @@ export type Database = {
           last_run_at?: string | null
           last_status?: string | null
           name?: string
+          run_days?: string[] | null
+          run_end_hour?: number | null
+          run_start_hour?: number | null
           source_type?: string
           source_url?: string
           updated_at?: string
@@ -364,7 +376,9 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      cleanup_old_trades: { Args: never; Returns: number }
+      cleanup_old_trades:
+        | { Args: never; Returns: number }
+        | { Args: { retention_days?: number }; Returns: number }
       get_chart_data: {
         Args: {
           p_currency?: string

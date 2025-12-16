@@ -15,16 +15,27 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
-    console.log('Starting cleanup of trades older than 30 days...')
+    // Get retention days from configuration
+    const { data: config, error: configError } = await supabase
+      .from('cron_job_configurations')
+      .select('retention_days')
+      .eq('id', 'cleanup-old-trades')
+      .single()
 
-    // Call the cleanup function
-    const { data, error } = await supabase.rpc('cleanup_old_trades')
+    const retentionDays = config?.retention_days || 30
+    console.log(`Starting cleanup of trades older than ${retentionDays} days...`)
+
+    // Call the cleanup function with retention days
+    const { data, error } = await supabase.rpc('cleanup_old_trades', {
+      retention_days: retentionDays
+    })
 
     if (error) {
       throw new Error(`Cleanup failed: ${error.message}`)
     }
 
-    console.log(`Cleanup complete. Deleted ${data} trades.`)
+    const deletedCount = data || 0
+    console.log(`Cleanup complete. Deleted ${deletedCount} trades.`)
 
     // Refresh the materialized view after cleanup
     await supabase.rpc('refresh_candles')
@@ -32,7 +43,9 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true, 
-        message: `Deleted ${data} old trades and refreshed candles view` 
+        deleted_count: deletedCount,
+        retention_days: retentionDays,
+        message: `Deleted ${deletedCount} trades older than ${retentionDays} days` 
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )

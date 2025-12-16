@@ -4,6 +4,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import { useToast } from "@/hooks/use-toast";
 import {
   Table,
@@ -21,6 +23,16 @@ import {
 import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings } from "lucide-react";
 import { formatDistanceToNow, addSeconds, format } from "date-fns";
 
+const DAYS_OF_WEEK = [
+  { value: "mon", label: "Mon" },
+  { value: "tue", label: "Tue" },
+  { value: "wed", label: "Wed" },
+  { value: "thu", label: "Thu" },
+  { value: "fri", label: "Fri" },
+  { value: "sat", label: "Sat" },
+  { value: "sun", label: "Sun" },
+];
+
 interface JobConfiguration {
   id: string;
   name: string;
@@ -31,6 +43,9 @@ interface JobConfiguration {
   last_status: string | null;
   last_error: string | null;
   fetch_interval_seconds?: number;
+  run_days?: string[];
+  run_start_hour?: number;
+  run_end_hour?: number;
 }
 
 interface DataSourceTableProps {
@@ -48,6 +63,7 @@ interface CronJobConfiguration {
   last_run_at: string | null;
   last_status: string | null;
   last_error: string | null;
+  retention_days?: number | null;
 }
 
 export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSourceTableProps) {
@@ -57,7 +73,18 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
   const [runningCronId, setRunningCronId] = useState<string | null>(null);
   const [cronJobs, setCronJobs] = useState<CronJobConfiguration[]>([]);
   const [editingSchedule, setEditingSchedule] = useState<string | null>(null);
+  const [editingJobSchedule, setEditingJobSchedule] = useState<string | null>(null);
   const [scheduleValue, setScheduleValue] = useState("");
+  const [retentionDays, setRetentionDays] = useState<number>(30);
+  const [jobScheduleConfig, setJobScheduleConfig] = useState<{
+    run_days: string[];
+    run_start_hour: number;
+    run_end_hour: number;
+  }>({
+    run_days: ["mon", "tue", "wed", "thu", "fri"],
+    run_start_hour: 6,
+    run_end_hour: 21,
+  });
 
   useEffect(() => {
     if (showCronJobs) {
@@ -100,9 +127,16 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
   };
 
   const handleScheduleUpdate = async (cronJob: CronJobConfiguration) => {
+    const updateData: { schedule: string; retention_days?: number } = { schedule: scheduleValue };
+    
+    // Include retention_days if this is the cleanup job
+    if (cronJob.id === "cleanup-old-trades") {
+      updateData.retention_days = retentionDays;
+    }
+
     const { error } = await supabase
       .from("cron_job_configurations")
-      .update({ schedule: scheduleValue })
+      .update(updateData)
       .eq("id", cronJob.id);
 
     if (error) {
@@ -114,11 +148,37 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     } else {
       toast({
         title: "Schedule updated",
-        description: `${cronJob.name} schedule set to: ${scheduleValue}`,
+        description: `${cronJob.name} configuration saved`,
       });
       fetchCronJobs();
     }
     setEditingSchedule(null);
+  };
+
+  const handleJobScheduleUpdate = async (job: JobConfiguration) => {
+    const { error } = await supabase
+      .from("job_configurations")
+      .update({
+        run_days: jobScheduleConfig.run_days,
+        run_start_hour: jobScheduleConfig.run_start_hour,
+        run_end_hour: jobScheduleConfig.run_end_hour,
+      })
+      .eq("id", job.id);
+
+    if (error) {
+      toast({
+        title: "Failed to update schedule",
+        description: error.message,
+        variant: "destructive",
+      });
+    } else {
+      toast({
+        title: "Schedule updated",
+        description: `${job.name} schedule saved`,
+      });
+      onUpdate();
+    }
+    setEditingJobSchedule(null);
   };
 
   const handleToggle = async (job: JobConfiguration, enabled: boolean) => {
@@ -223,6 +283,12 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     
     let description = "";
     
+    // Interval
+    if (minute.startsWith("*/")) {
+      const interval = minute.slice(2);
+      return `Every ${interval} min`;
+    }
+    
     // Time
     if (hour !== "*" && minute !== "*") {
       description += `${hour.padStart(2, "0")}:${minute.padStart(2, "0")} UTC`;
@@ -236,6 +302,20 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     }
     
     return description || schedule;
+  };
+
+  const formatJobSchedule = (job: JobConfiguration): string => {
+    const days = job.run_days || ["mon", "tue", "wed", "thu", "fri"];
+    const startHour = job.run_start_hour ?? 6;
+    const endHour = job.run_end_hour ?? 21;
+    
+    const isWeekdays = days.length === 5 && 
+      ["mon", "tue", "wed", "thu", "fri"].every(d => days.includes(d));
+    const isAllDays = days.length === 7;
+    
+    const daysStr = isAllDays ? "Daily" : isWeekdays ? "Mon-Fri" : days.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(", ");
+    
+    return `${String(startHour).padStart(2, "0")}:00-${String(endHour).padStart(2, "0")}:00 (${daysStr})`;
   };
 
   const getStatusBadge = (job: JobConfiguration) => {
@@ -281,6 +361,15 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     return format(nextRun, "HH:mm:ss");
   };
 
+  const toggleDay = (day: string) => {
+    setJobScheduleConfig(prev => ({
+      ...prev,
+      run_days: prev.run_days.includes(day)
+        ? prev.run_days.filter(d => d !== day)
+        : [...prev.run_days, day],
+    }));
+  };
+
   return (
     <div className="space-y-6">
       <div className="rounded-md border">
@@ -291,7 +380,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
               <TableHead>Type</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last Run</TableHead>
-              <TableHead>Next Run</TableHead>
+              <TableHead>Schedule</TableHead>
               <TableHead>Enabled</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -315,7 +404,85 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                   )}
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-muted-foreground">{getNextRunTime(job)}</span>
+                  <Popover open={editingJobSchedule === job.id} onOpenChange={(open) => {
+                    if (open) {
+                      setEditingJobSchedule(job.id);
+                      setJobScheduleConfig({
+                        run_days: job.run_days || ["mon", "tue", "wed", "thu", "fri"],
+                        run_start_hour: job.run_start_hour ?? 6,
+                        run_end_hour: job.run_end_hour ?? 21,
+                      });
+                    } else {
+                      setEditingJobSchedule(null);
+                    }
+                  }}>
+                    <PopoverTrigger asChild>
+                      <Button variant="ghost" size="sm" className="h-auto p-1 font-normal">
+                        <span className="text-sm text-muted-foreground">{formatJobSchedule(job)}</span>
+                        <Settings className="h-3 w-3 ml-1 opacity-50" />
+                      </Button>
+                    </PopoverTrigger>
+                    <PopoverContent className="w-80">
+                      <div className="space-y-4">
+                        <h4 className="font-medium">Schedule Configuration</h4>
+                        
+                        <div className="space-y-2">
+                          <Label className="text-sm">Active Days</Label>
+                          <div className="flex flex-wrap gap-2">
+                            {DAYS_OF_WEEK.map((day) => (
+                              <div key={day.value} className="flex items-center gap-1">
+                                <Checkbox
+                                  id={`${job.id}-${day.value}`}
+                                  checked={jobScheduleConfig.run_days.includes(day.value)}
+                                  onCheckedChange={() => toggleDay(day.value)}
+                                />
+                                <Label htmlFor={`${job.id}-${day.value}`} className="text-xs cursor-pointer">
+                                  {day.label}
+                                </Label>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-3">
+                          <div className="space-y-2">
+                            <Label className="text-sm">Start Hour (UTC)</Label>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={23}
+                              value={jobScheduleConfig.run_start_hour}
+                              onChange={(e) => setJobScheduleConfig(prev => ({
+                                ...prev,
+                                run_start_hour: parseInt(e.target.value) || 0,
+                              }))}
+                            />
+                          </div>
+                          <div className="space-y-2">
+                            <Label className="text-sm">End Hour (UTC)</Label>
+                            <Input
+                              type="number"
+                              min={0}
+                              max={23}
+                              value={jobScheduleConfig.run_end_hour}
+                              onChange={(e) => setJobScheduleConfig(prev => ({
+                                ...prev,
+                                run_end_hour: parseInt(e.target.value) || 23,
+                              }))}
+                            />
+                          </div>
+                        </div>
+
+                        <p className="text-xs text-muted-foreground">
+                          Job will run every {job.fetch_interval_seconds || 60}s during active hours
+                        </p>
+
+                        <Button size="sm" onClick={() => handleJobScheduleUpdate(job)}>
+                          Save Schedule
+                        </Button>
+                      </div>
+                    </PopoverContent>
+                  </Popover>
                 </TableCell>
                 <TableCell>
                   <Switch
@@ -380,32 +547,59 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                     if (open) {
                       setEditingSchedule(cronJob.id);
                       setScheduleValue(cronJob.schedule);
+                      setRetentionDays(cronJob.retention_days || 30);
                     } else {
                       setEditingSchedule(null);
                     }
                   }}>
                     <PopoverTrigger asChild>
                       <Button variant="ghost" size="sm" className="h-auto p-1 font-normal">
-                        <span className="text-sm text-muted-foreground">{parseCronSchedule(cronJob.schedule)}</span>
+                        <span className="text-sm text-muted-foreground">
+                          {parseCronSchedule(cronJob.schedule)}
+                          {cronJob.id === "cleanup-old-trades" && cronJob.retention_days && (
+                            <span className="ml-1">({cronJob.retention_days}d)</span>
+                          )}
+                        </span>
                         <Settings className="h-3 w-3 ml-1 opacity-50" />
                       </Button>
                     </PopoverTrigger>
                     <PopoverContent className="w-80">
-                      <div className="space-y-3">
-                        <h4 className="font-medium">Edit Schedule</h4>
-                        <p className="text-sm text-muted-foreground">
-                          Cron format: minute hour day month weekday
-                        </p>
-                        <Input
-                          value={scheduleValue}
-                          onChange={(e) => setScheduleValue(e.target.value)}
-                          placeholder="0 0 * * *"
-                        />
-                        <div className="text-xs text-muted-foreground space-y-1">
-                          <p><code>0 0 * * *</code> = Daily at midnight</p>
-                          <p><code>0 6 * * 1-5</code> = Weekdays at 06:00</p>
-                          <p><code>0 */2 * * *</code> = Every 2 hours</p>
+                      <div className="space-y-4">
+                        <h4 className="font-medium">Edit Configuration</h4>
+                        
+                        <div className="space-y-2">
+                          <Label className="text-sm">Cron Schedule</Label>
+                          <p className="text-xs text-muted-foreground">
+                            Format: minute hour day month weekday
+                          </p>
+                          <Input
+                            value={scheduleValue}
+                            onChange={(e) => setScheduleValue(e.target.value)}
+                            placeholder="0 0 * * *"
+                          />
+                          <div className="text-xs text-muted-foreground space-y-1">
+                            <p><code>0 2 * * *</code> = Daily at 02:00 UTC</p>
+                            <p><code>0 8 * * 1-5</code> = Weekdays at 08:00 UTC</p>
+                            <p><code>*/5 * * * *</code> = Every 5 minutes</p>
+                          </div>
                         </div>
+
+                        {cronJob.id === "cleanup-old-trades" && (
+                          <div className="space-y-2">
+                            <Label className="text-sm">Retention Period (days)</Label>
+                            <Input
+                              type="number"
+                              min={1}
+                              max={365}
+                              value={retentionDays}
+                              onChange={(e) => setRetentionDays(parseInt(e.target.value) || 30)}
+                            />
+                            <p className="text-xs text-muted-foreground">
+                              Trades older than this will be deleted
+                            </p>
+                          </div>
+                        )}
+
                         <Button size="sm" onClick={() => handleScheduleUpdate(cronJob)}>
                           Save
                         </Button>
