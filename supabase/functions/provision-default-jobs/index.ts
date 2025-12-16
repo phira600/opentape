@@ -11,7 +11,12 @@ interface DefaultJob {
   source_type: string
   is_enabled: boolean
   fetch_interval_seconds: number
+  run_days: string[]
+  run_start_hour: number
+  run_end_hour: number
 }
+
+const WEEKDAYS = ['mon', 'tue', 'wed', 'thu', 'fri']
 
 const DEFAULT_JOBS: DefaultJob[] = [
   {
@@ -20,6 +25,9 @@ const DEFAULT_JOBS: DefaultJob[] = [
     source_type: 'cboe_bxe',
     is_enabled: true,
     fetch_interval_seconds: 60,
+    run_days: WEEKDAYS,
+    run_start_hour: 6,
+    run_end_hour: 21,
   },
   {
     name: 'CBOE CXE',
@@ -27,6 +35,9 @@ const DEFAULT_JOBS: DefaultJob[] = [
     source_type: 'cboe_cxe',
     is_enabled: true,
     fetch_interval_seconds: 60,
+    run_days: WEEKDAYS,
+    run_start_hour: 6,
+    run_end_hour: 21,
   },
   {
     name: 'CBOE DXE',
@@ -34,6 +45,9 @@ const DEFAULT_JOBS: DefaultJob[] = [
     source_type: 'cboe_dxe',
     is_enabled: true,
     fetch_interval_seconds: 60,
+    run_days: WEEKDAYS,
+    run_start_hour: 6,
+    run_end_hour: 21,
   },
   {
     name: 'CBOE SIS Symbology',
@@ -41,6 +55,9 @@ const DEFAULT_JOBS: DefaultJob[] = [
     source_type: 'cboe_sis',
     is_enabled: true,
     fetch_interval_seconds: 86400, // Daily refresh
+    run_days: WEEKDAYS,
+    run_start_hour: 8,
+    run_end_hour: 8, // Only runs at 08:00
   },
   {
     name: 'Nasdaq Nordic',
@@ -48,6 +65,9 @@ const DEFAULT_JOBS: DefaultJob[] = [
     source_type: 'nasdaq',
     is_enabled: true,
     fetch_interval_seconds: 60,
+    run_days: WEEKDAYS,
+    run_start_hour: 6,
+    run_end_hour: 21,
   },
 ]
 

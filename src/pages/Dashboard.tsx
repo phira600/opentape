@@ -20,6 +20,9 @@ interface JobConfiguration {
   last_status: string | null;
   last_error: string | null;
   fetch_interval_seconds?: number;
+  run_days?: string[];
+  run_start_hour?: number;
+  run_end_hour?: number;
 }
 
 export default function Dashboard() {
