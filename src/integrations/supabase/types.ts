@@ -86,34 +86,34 @@ export type Database = {
         Row: {
           bucket: string
           close: number | null
+          currency: string
           high: number | null
           low: number | null
           open: number | null
           symbol: string
           trade_count: number | null
-          venue: string
           volume: number | null
         }
         Insert: {
           bucket: string
           close?: number | null
+          currency: string
           high?: number | null
           low?: number | null
           open?: number | null
           symbol: string
           trade_count?: number | null
-          venue: string
           volume?: number | null
         }
         Update: {
           bucket?: string
           close?: number | null
+          currency?: string
           high?: number | null
           low?: number | null
           open?: number | null
           symbol?: string
           trade_count?: number | null
-          venue?: string
           volume?: number | null
         }
         Relationships: []
