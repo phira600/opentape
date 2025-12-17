@@ -160,6 +160,30 @@ export type Database = {
         }
         Relationships: []
       }
+      daily_stats: {
+        Row: {
+          date: string
+          last_updated: string
+          total_trades: number
+          unique_symbols: number
+          unique_venues: number
+        }
+        Insert: {
+          date: string
+          last_updated?: string
+          total_trades?: number
+          unique_symbols?: number
+          unique_venues?: number
+        }
+        Update: {
+          date?: string
+          last_updated?: string
+          total_trades?: number
+          unique_symbols?: number
+          unique_venues?: number
+        }
+        Relationships: []
+      }
       job_configurations: {
         Row: {
           created_at: string
@@ -214,6 +238,7 @@ export type Database = {
       mv_refresh_log: {
         Row: {
           id: string
+          last_trade_id: string | null
           refresh_duration_ms: number | null
           refreshed_at: string
           rows_count: number | null
@@ -221,6 +246,7 @@ export type Database = {
         }
         Insert: {
           id?: string
+          last_trade_id?: string | null
           refresh_duration_ms?: number | null
           refreshed_at?: string
           rows_count?: number | null
@@ -228,6 +254,7 @@ export type Database = {
         }
         Update: {
           id?: string
+          last_trade_id?: string | null
           refresh_duration_ms?: number | null
           refreshed_at?: string
           rows_count?: number | null
