@@ -348,6 +348,7 @@ export type Database = {
       trades_normalized: {
         Row: {
           created_at: string
+          currency: string | null
           id: string
           job_id: string | null
           market_mechanism: string | null
@@ -362,6 +363,7 @@ export type Database = {
         }
         Insert: {
           created_at?: string
+          currency?: string | null
           id?: string
           job_id?: string | null
           market_mechanism?: string | null
@@ -376,6 +378,7 @@ export type Database = {
         }
         Update: {
           created_at?: string
+          currency?: string | null
           id?: string
           job_id?: string | null
           market_mechanism?: string | null

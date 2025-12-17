@@ -26,6 +26,7 @@ interface TradeRecord {
   quantity: number
   trade_time: string
   venue: string
+  currency?: string
   market_mechanism?: string
   trading_mode?: string
   transaction_id?: string
@@ -409,6 +410,7 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
       tradingDateTime: headers.findIndex(h => h === 'trading_date_time'),
       symbol: headers.findIndex(h => h === 'symbol'),
       price: headers.findIndex(h => h === 'price'),
+      priceCurrency: headers.findIndex(h => h === 'price_currency'),
       executedShares: headers.findIndex(h => h === 'executed_shares'),
       executionVenue: headers.findIndex(h => h === 'execution_venue'),
       marketMechanism: headers.findIndex(h => h === 'market_mechanism'),
@@ -444,6 +446,7 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
         quantity,
         trade_time: tradeTime,
         venue: venue || 'CBOE',
+        currency: indices.priceCurrency >= 0 ? values[indices.priceCurrency]?.trim() : undefined,
         market_mechanism: indices.marketMechanism >= 0 ? values[indices.marketMechanism]?.trim() : undefined,
         trading_mode: indices.tradingMode >= 0 ? values[indices.tradingMode]?.trim() : undefined,
         transaction_id: indices.tradeId >= 0 ? values[indices.tradeId]?.trim() : undefined,
@@ -628,6 +631,7 @@ function parseNasdaqData(rawData: string, jobName: string): TradeRecord[] {
         quantity,
         trade_time: tradeTime,
         venue: venue || 'NASDAQ',
+        currency: indices.currency >= 0 ? values[indices.currency] : undefined,
         market_mechanism: indices.mmtFlag >= 0 ? values[indices.mmtFlag] : undefined,
         trading_mode: indices.tradeType >= 0 ? values[indices.tradeType] : undefined,
         transaction_id: indices.transactionId >= 0 ? values[indices.transactionId] : undefined,
