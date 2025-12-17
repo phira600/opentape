@@ -329,8 +329,6 @@ serve(async (req) => {
     const responseData = {
       isin,
       currency,
-      mic,
-      venue: venueUsed,
       name: symbolName,
       interval: intervalMinutes,
       from: startTime.toISOString(),
