@@ -522,9 +522,12 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
     
     console.log(`Nasdaq: Trying ${urlsToTry.length} new files for ${todayStr}`)
     
-    // Fetch files in parallel (batch of 10)
-    for (let i = 0; i < urlsToTry.length; i += 10) {
-      const batch = urlsToTry.slice(i, i + 10)
+    let notFoundCount = 0
+    let errorCount = 0
+    
+    // Fetch files in smaller batches with delay to avoid rate limiting
+    for (let i = 0; i < urlsToTry.length; i += 5) {
+      const batch = urlsToTry.slice(i, i + 5)
       const results = await Promise.allSettled(
         batch.map(async ({ url, fileName }) => {
           try {
@@ -542,10 +545,20 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
               if (data.includes('Trading date and time') && lines.length > 2) {
                 console.log(`Nasdaq: Found ${fileName} (${lines.length} lines)`)
                 return { data, url, fileName }
+              } else {
+                notFoundCount++
+              }
+            } else {
+              if (response.status !== 404) {
+                errorCount++
+                console.log(`Nasdaq: HTTP ${response.status} for ${fileName}`)
+              } else {
+                notFoundCount++
               }
             }
           } catch (e) {
-            // Ignore errors for individual files
+            errorCount++
+            console.log(`Nasdaq: Error fetching ${fileName}: ${e}`)
           }
           return null
         })
@@ -556,7 +569,14 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
           files.push(result.value)
         }
       }
+      
+      // Small delay between batches to avoid rate limiting
+      if (i + 5 < urlsToTry.length) {
+        await new Promise(r => setTimeout(r, 100))
+      }
     }
+    
+    console.log(`Nasdaq: Found ${files.length}, not found ${notFoundCount}, errors ${errorCount}`)
     
     console.log(`Nasdaq: Downloaded ${files.length} valid files`)
   } catch (e) {
