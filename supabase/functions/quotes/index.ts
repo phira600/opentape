@@ -12,8 +12,6 @@ const corsHeaders = {
 interface QuoteResult {
   isin: string;
   currency: string;
-  symbol: string;
-  mic: string | null;
   name: string | null;
   last: number;
   high: number;
@@ -26,9 +24,10 @@ interface QuoteResult {
 interface IsinCurrencyPair {
   isin: string;
   currency: string;
+  name?: string | null;
 }
 
-// In-memory LRU cache for API key validation (reduces DB queries by ~90%)
+// In-memory LRU cache for API key validation
 const API_KEY_CACHE = new Map<string, { valid: boolean; keyId: string | null; expires: number }>();
 const CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_CACHE_SIZE = 100;
@@ -45,7 +44,6 @@ function getCachedResponse(key: string): any | null {
 }
 
 function setCachedResponse(key: string, data: any) {
-  // LRU eviction
   if (RESPONSE_CACHE.size >= MAX_CACHE_SIZE) {
     const oldestKey = RESPONSE_CACHE.keys().next().value;
     if (oldestKey) RESPONSE_CACHE.delete(oldestKey);
@@ -56,10 +54,8 @@ function setCachedResponse(key: string, data: any) {
 async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   if (!apiKey) return false;
   
-  // Check cache first
   const cached = API_KEY_CACHE.get(apiKey);
   if (cached && cached.expires > Date.now()) {
-    // Background update of last_used_at (non-blocking)
     if (cached.valid && cached.keyId) {
       EdgeRuntime.waitUntil(
         supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", cached.keyId)
@@ -83,20 +79,17 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   
   const isValid = !error && !!keyData;
   
-  // LRU eviction for API key cache
   if (API_KEY_CACHE.size >= MAX_CACHE_SIZE) {
     const oldestKey = API_KEY_CACHE.keys().next().value;
     if (oldestKey) API_KEY_CACHE.delete(oldestKey);
   }
   
-  // Cache the result
   API_KEY_CACHE.set(apiKey, { 
     valid: isValid, 
     keyId: keyData?.id || null, 
     expires: Date.now() + CACHE_TTL_MS 
   });
   
-  // Background update of last_used_at (non-blocking)
   if (isValid && keyData?.id) {
     EdgeRuntime.waitUntil(
       supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyData.id)
@@ -106,18 +99,18 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   return isValid;
 }
 
-// Aggregate trades into OHLCV data
-function aggregateTrades(trades: any[] | undefined): { open: number; high: number; low: number; close: number; volume: number; timestamp: string } | null {
+// Aggregate trades into OHLCV data (across all venues)
+function aggregateTrades(trades: any[]): { open: number; high: number; low: number; close: number; volume: number; timestamp: string } | null {
   if (!trades || trades.length === 0) return null;
   
   const sorted = [...trades].sort((a, b) => new Date(a.trade_time).getTime() - new Date(b.trade_time).getTime());
   
   return {
-    open: sorted[0].price,
-    high: Math.max(...sorted.map(t => t.price)),
-    low: Math.min(...sorted.map(t => t.price)),
-    close: sorted[sorted.length - 1].price,
-    volume: sorted.reduce((sum, t) => sum + (t.quantity || 0), 0),
+    open: Number(sorted[0].price),
+    high: Math.max(...sorted.map(t => Number(t.price))),
+    low: Math.min(...sorted.map(t => Number(t.price))),
+    close: Number(sorted[sorted.length - 1].price),
+    volume: sorted.reduce((sum, t) => sum + Number(t.quantity || 0), 0),
     timestamp: sorted[sorted.length - 1].trade_time,
   };
 }
@@ -168,168 +161,147 @@ serve(async (req) => {
 
     console.log(`Fetching quotes: isins=${isins}, mic=${mic}`);
 
-    // Parse ISINs with optional currency: "SE0022419784:SEK,GB0000000001:GBP"
-    const isinPairs: IsinCurrencyPair[] = [];
-    
-    if (isins) {
-      const isinList = isins.split(",").map((s) => s.trim());
-      for (const item of isinList) {
-        if (item.includes(":")) {
-          const [isin, currency] = item.split(":");
-          isinPairs.push({ isin: isin.trim(), currency: currency.trim() });
-        } else {
-          isinPairs.push({ isin: item, currency: "" });
-        }
-      }
-    }
-
     const today = new Date();
     const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0)).toISOString();
 
-    // If only MIC provided, fetch all ISINs for that MIC
-    if (isinPairs.length === 0 && mic) {
-      const { data: micData, error: micError } = await supabase
+    // Build list of ISIN+Currency pairs to query
+    const isinPairs: IsinCurrencyPair[] = [];
+
+    // If MIC provided, look up all unique ISIN+Currency pairs for that MIC from symbology
+    if (mic) {
+      console.log(`Looking up ISIN+Currency pairs for MIC ${mic}`);
+      
+      const { data: micSymbology, error: micError } = await supabase
         .from("symbology")
-        .select("isin, currency, name, mic")
+        .select("isin, currency, name")
         .eq("mic", mic)
-        .not("isin", "is", null);
+        .not("isin", "is", null)
+        .not("currency", "is", null);
 
       if (micError) {
-        console.error("Error fetching MIC data:", micError);
+        console.error("Error fetching symbology for MIC:", micError);
         return new Response(
           JSON.stringify({ quotes: [], count: 0, error: micError.message }),
           { headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
 
-      if (micData && micData.length > 0) {
-        const isinMicMap = new Map<string, { mic: string; currency: string; name: string }>();
-        for (const sym of micData) {
-          if (sym.isin) {
-            isinMicMap.set(`${sym.isin}:${sym.currency}`, { mic: sym.mic, currency: sym.currency, name: sym.name });
+      if (micSymbology && micSymbology.length > 0) {
+        // Get unique ISIN+Currency pairs
+        const seen = new Set<string>();
+        for (const sym of micSymbology) {
+          const key = `${sym.isin}:${sym.currency}`;
+          if (!seen.has(key)) {
+            seen.add(key);
+            isinPairs.push({ isin: sym.isin, currency: sym.currency, name: sym.name });
           }
         }
-
-        const uniqueIsins = [...new Set(micData.map(r => r.isin).filter(Boolean))];
-        
-        const { data: tradesData, error: tradesError } = await supabase
-          .from("trades_normalized")
-          .select("symbol, price, quantity, trade_time, venue")
-          .in("symbol", uniqueIsins)
-          .eq("venue", mic)
-          .gte("trade_time", startOfDay)
-          .order("trade_time", { ascending: true });
-
-        if (tradesError) {
-          console.error("Error fetching trades:", tradesError);
-          return new Response(
-            JSON.stringify({ quotes: [], count: 0, error: tradesError.message }),
-            { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
-        }
-
-        const tradesByIsin = new Map<string, any[]>();
-        for (const trade of (tradesData || [])) {
-          const existing = tradesByIsin.get(trade.symbol) || [];
-          existing.push(trade);
-          tradesByIsin.set(trade.symbol, existing);
-        }
-
-        const quotes: QuoteResult[] = [];
-        for (const sym of micData) {
-          if (!sym.isin) continue;
-          const trades = tradesByIsin.get(sym.isin);
-          const agg = aggregateTrades(trades);
-          if (!agg) continue;
-
-          quotes.push({
-            isin: sym.isin,
-            currency: sym.currency || "",
-            symbol: sym.isin,
-            mic: sym.mic,
-            name: sym.name,
-            last: agg.close,
-            high: agg.high,
-            low: agg.low,
-            open: agg.open,
-            volume: agg.volume,
-            timestamp: agg.timestamp,
-          });
-        }
-
-        console.log(`Returning ${quotes.length} quotes for MIC ${mic}`);
-
-        const responseData = { quotes, count: quotes.length };
-        setCachedResponse(cacheKey, responseData);
-
-        return new Response(
-          JSON.stringify(responseData),
-          { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "MISS" } }
-        );
+        console.log(`Found ${isinPairs.length} unique ISIN+Currency pairs for MIC ${mic}`);
+      } else {
+        console.log(`No symbology entries found for MIC ${mic}`);
       }
+    }
 
-      return new Response(
-        JSON.stringify({ quotes: [], count: 0, error: "No ISINs found for MIC" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    // Also parse explicit ISINs from the isins parameter
+    if (isins) {
+      const isinList = isins.split(",").map((s) => s.trim());
+      for (const item of isinList) {
+        if (item.includes(":")) {
+          const [isin, currency] = item.split(":");
+          // Check if already in list
+          const key = `${isin.trim()}:${currency.trim()}`;
+          if (!isinPairs.some(p => `${p.isin}:${p.currency}` === key)) {
+            isinPairs.push({ isin: isin.trim(), currency: currency.trim() });
+          }
+        } else {
+          // ISIN without currency - look up from symbology
+          const { data: symData } = await supabase
+            .from("symbology")
+            .select("isin, currency, name")
+            .eq("isin", item.trim())
+            .not("currency", "is", null)
+            .limit(1)
+            .maybeSingle();
+          
+          if (symData) {
+            const key = `${symData.isin}:${symData.currency}`;
+            if (!isinPairs.some(p => `${p.isin}:${p.currency}` === key)) {
+              isinPairs.push({ isin: symData.isin, currency: symData.currency, name: symData.name });
+            }
+          }
+        }
+      }
     }
 
     if (isinPairs.length === 0) {
       return new Response(
-        JSON.stringify({ quotes: [], count: 0, error: "No ISINs provided or found for MIC" }),
+        JSON.stringify({ quotes: [], count: 0, error: "No valid ISIN+Currency pairs found" }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
     }
 
-    console.log(`Processing ${isinPairs.length} ISIN/currency pairs`);
+    console.log(`Processing ${isinPairs.length} ISIN+Currency pairs`);
 
-    const quotes: QuoteResult[] = [];
+    // Fetch all trades for all ISINs in one query (across ALL venues)
+    const uniqueIsins = [...new Set(isinPairs.map(p => p.isin))];
+    
+    const { data: allTrades, error: tradesError } = await supabase
+      .from("trades_normalized")
+      .select("symbol, price, quantity, trade_time")
+      .in("symbol", uniqueIsins)
+      .gte("trade_time", startOfDay)
+      .order("trade_time", { ascending: true });
 
-    for (const pair of isinPairs) {
-      let symQuery = supabase
+    if (tradesError) {
+      console.error("Error fetching trades:", tradesError);
+      return new Response(
+        JSON.stringify({ quotes: [], count: 0, error: tradesError.message }),
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
+    // Group trades by ISIN
+    const tradesByIsin = new Map<string, any[]>();
+    for (const trade of (allTrades || [])) {
+      const existing = tradesByIsin.get(trade.symbol) || [];
+      existing.push(trade);
+      tradesByIsin.set(trade.symbol, existing);
+    }
+
+    // Look up names for pairs that don't have them
+    const pairsNeedingNames = isinPairs.filter(p => !p.name);
+    if (pairsNeedingNames.length > 0) {
+      const { data: nameData } = await supabase
         .from("symbology")
-        .select("isin, name, currency, mic")
-        .eq("isin", pair.isin);
+        .select("isin, currency, name")
+        .in("isin", pairsNeedingNames.map(p => p.isin));
       
-      if (pair.currency) {
-        symQuery = symQuery.eq("currency", pair.currency);
+      if (nameData) {
+        const nameMap = new Map<string, string>();
+        for (const n of nameData) {
+          nameMap.set(`${n.isin}:${n.currency}`, n.name);
+        }
+        for (const pair of pairsNeedingNames) {
+          pair.name = nameMap.get(`${pair.isin}:${pair.currency}`) || null;
+        }
       }
+    }
+
+    // Build quotes
+    const quotes: QuoteResult[] = [];
+    for (const pair of isinPairs) {
+      const trades = tradesByIsin.get(pair.isin);
+      const agg = aggregateTrades(trades || []);
       
-      const { data: symData } = await symQuery.limit(1).maybeSingle();
-      
-      if (!symData) {
-        console.log(`No symbology found for ISIN ${pair.isin}:${pair.currency}`);
-        continue;
-      }
-
-      const targetMic = symData.mic;
-      console.log(`ISIN ${pair.isin}:${pair.currency} -> MIC ${targetMic}`);
-
-      let tradesQuery = supabase
-        .from("trades_normalized")
-        .select("symbol, price, quantity, trade_time, venue")
-        .eq("symbol", pair.isin)
-        .gte("trade_time", startOfDay)
-        .order("trade_time", { ascending: true });
-
-      if (targetMic) {
-        tradesQuery = tradesQuery.eq("venue", targetMic);
-      }
-
-      const { data: tradesData } = await tradesQuery;
-      
-      const agg = aggregateTrades(tradesData || undefined);
       if (!agg) {
-        console.log(`No trade data for ${pair.isin} at MIC ${targetMic}`);
+        console.log(`No trade data for ${pair.isin}:${pair.currency}`);
         continue;
       }
 
       quotes.push({
         isin: pair.isin,
-        currency: symData.currency || pair.currency || "",
-        symbol: pair.isin,
-        mic: symData.mic,
-        name: symData.name,
+        currency: pair.currency,
+        name: pair.name || null,
         last: agg.close,
         high: agg.high,
         low: agg.low,

@@ -82,63 +82,156 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
   return isValid;
 }
 
-// Aggregate data into candles
-function aggregateToCandles(items: any[], intervalMinutes: number, isCandles: boolean): any[] {
-  if (!items || items.length === 0) return [];
+// Aggregate candles from all venues into single candles per timestamp
+function aggregateCandlesAcrossVenues(candles: any[]): any[] {
+  if (!candles || candles.length === 0) return [];
   
-  if (isCandles && intervalMinutes === 1) {
-    return items.map(c => ({
-      timestamp: c.bucket,
-      open: Number(c.open),
-      high: Number(c.high),
-      low: Number(c.low),
-      close: Number(c.close),
-      volume: Number(c.volume),
-    }));
-  }
+  const buckets = new Map<string, { 
+    open: number; high: number; low: number; close: number; volume: number; 
+    firstTime: number; lastTime: number;
+  }>();
   
-  const buckets: Map<string, { open: number; high: number; low: number; close: number; volume: number; timestamp: string; firstTime: number }> = new Map();
-  
-  for (const item of items) {
-    const itemTime = new Date(isCandles ? item.bucket : item.trade_time);
-    const bucketTime = new Date(
-      Math.floor(itemTime.getTime() / (intervalMinutes * 60 * 1000)) * intervalMinutes * 60 * 1000
-    );
-    const bucketKey = bucketTime.toISOString();
-    
-    const price = isCandles ? Number(item.open) : Number(item.price);
-    const high = isCandles ? Number(item.high) : Number(item.price);
-    const low = isCandles ? Number(item.low) : Number(item.price);
-    const close = isCandles ? Number(item.close) : Number(item.price);
-    const volume = isCandles ? Number(item.volume) : Number(item.quantity || 0);
+  for (const candle of candles) {
+    const bucketKey = candle.bucket;
+    const candleTime = new Date(candle.bucket).getTime();
     
     const existing = buckets.get(bucketKey);
     if (!existing) {
       buckets.set(bucketKey, {
-        timestamp: bucketKey,
-        open: price,
-        high: high,
-        low: low,
-        close: close,
-        volume: volume,
-        firstTime: itemTime.getTime(),
+        open: Number(candle.open),
+        high: Number(candle.high),
+        low: Number(candle.low),
+        close: Number(candle.close),
+        volume: Number(candle.volume || 0),
+        firstTime: candleTime,
+        lastTime: candleTime,
       });
     } else {
-      existing.high = Math.max(existing.high, high);
-      existing.low = Math.min(existing.low, low);
-      if (itemTime.getTime() > existing.firstTime) {
-        existing.close = close;
-      }
-      if (itemTime.getTime() < existing.firstTime) {
-        existing.open = price;
-        existing.firstTime = itemTime.getTime();
-      }
-      existing.volume += volume;
+      // Merge: max high, min low, sum volume
+      existing.high = Math.max(existing.high, Number(candle.high));
+      existing.low = Math.min(existing.low, Number(candle.low));
+      existing.volume += Number(candle.volume || 0);
+      // For open/close, use the values from any venue (they should be similar)
+      // If we had actual trade times within the candle, we'd use those
     }
   }
   
-  return Array.from(buckets.values())
-    .map(({ firstTime, ...rest }) => rest)
+  return Array.from(buckets.entries())
+    .map(([timestamp, data]) => ({
+      timestamp,
+      open: data.open,
+      high: data.high,
+      low: data.low,
+      close: data.close,
+      volume: data.volume,
+    }))
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+// Aggregate raw trades into candles at specified interval
+function aggregateTradesIntoCandles(trades: any[], intervalMinutes: number): any[] {
+  if (!trades || trades.length === 0) return [];
+  
+  const buckets = new Map<string, { 
+    open: number; high: number; low: number; close: number; volume: number;
+    firstTime: number;
+  }>();
+  
+  for (const trade of trades) {
+    const tradeTime = new Date(trade.trade_time);
+    const bucketTime = new Date(
+      Math.floor(tradeTime.getTime() / (intervalMinutes * 60 * 1000)) * intervalMinutes * 60 * 1000
+    );
+    const bucketKey = bucketTime.toISOString();
+    
+    const price = Number(trade.price);
+    const volume = Number(trade.quantity || 0);
+    
+    const existing = buckets.get(bucketKey);
+    if (!existing) {
+      buckets.set(bucketKey, {
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        volume: volume,
+        firstTime: tradeTime.getTime(),
+      });
+    } else {
+      existing.high = Math.max(existing.high, price);
+      existing.low = Math.min(existing.low, price);
+      existing.volume += volume;
+      if (tradeTime.getTime() > existing.firstTime) {
+        existing.close = price;
+      }
+      if (tradeTime.getTime() < existing.firstTime) {
+        existing.open = price;
+        existing.firstTime = tradeTime.getTime();
+      }
+    }
+  }
+  
+  return Array.from(buckets.entries())
+    .map(([timestamp, data]) => ({
+      timestamp,
+      open: data.open,
+      high: data.high,
+      low: data.low,
+      close: data.close,
+      volume: data.volume,
+    }))
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
+}
+
+// Re-aggregate 1-min candles into larger intervals
+function reaggregateCandlesToInterval(candles: any[], intervalMinutes: number): any[] {
+  if (intervalMinutes === 1) return candles;
+  
+  const buckets = new Map<string, { 
+    open: number; high: number; low: number; close: number; volume: number;
+    firstTime: number;
+  }>();
+  
+  for (const candle of candles) {
+    const candleTime = new Date(candle.timestamp);
+    const bucketTime = new Date(
+      Math.floor(candleTime.getTime() / (intervalMinutes * 60 * 1000)) * intervalMinutes * 60 * 1000
+    );
+    const bucketKey = bucketTime.toISOString();
+    
+    const existing = buckets.get(bucketKey);
+    if (!existing) {
+      buckets.set(bucketKey, {
+        open: candle.open,
+        high: candle.high,
+        low: candle.low,
+        close: candle.close,
+        volume: candle.volume,
+        firstTime: candleTime.getTime(),
+      });
+    } else {
+      existing.high = Math.max(existing.high, candle.high);
+      existing.low = Math.min(existing.low, candle.low);
+      existing.volume += candle.volume;
+      if (candleTime.getTime() > existing.firstTime) {
+        existing.close = candle.close;
+      }
+      if (candleTime.getTime() < existing.firstTime) {
+        existing.open = candle.open;
+        existing.firstTime = candleTime.getTime();
+      }
+    }
+  }
+  
+  return Array.from(buckets.entries())
+    .map(([timestamp, data]) => ({
+      timestamp,
+      open: data.open,
+      high: data.high,
+      low: data.low,
+      close: data.close,
+      volume: data.volume,
+    }))
     .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
 }
 
@@ -207,10 +300,10 @@ serve(async (req) => {
 
     console.log(`Fetching intraday data for ISIN=${isin}, currency=${currency}`);
 
-    // Look up the correct MIC (venue) from symbology based on ISIN + currency
+    // Look up instrument info from symbology
     const { data: symbologyData, error: symbologyError } = await supabase
       .from("symbology")
-      .select("mic, venue, symbol, name")
+      .select("name")
       .eq("isin", isin)
       .eq("currency", currency)
       .limit(1)
@@ -220,33 +313,25 @@ serve(async (req) => {
       console.error("Symbology lookup error:", symbologyError);
     }
 
-    const mic = symbologyData?.mic || null;
     const symbolName = symbologyData?.name || null;
-    console.log(`Symbology lookup: ISIN=${isin}, currency=${currency} -> MIC=${mic}`);
+    console.log(`Symbology lookup: ISIN=${isin}, currency=${currency} -> name=${symbolName}`);
 
     const pageSize = 1000;
-    let allData: any[] = [];
+    let allCandles: any[] = [];
     let page = 0;
     let hasMore = true;
     let usedCandles = false;
-    let venueUsed: string | null = mic;
 
-    // First, try candles_1min view (filtered by MIC if available)
+    // Fetch candles from ALL venues for this ISIN (no venue filter)
     while (hasMore) {
-      let query = supabase
+      const { data: candlesPage, error: candlesError } = await supabase
         .from("candles_1min")
-        .select("bucket, open, high, low, close, volume, venue")
+        .select("bucket, open, high, low, close, volume")
         .eq("symbol", isin)
         .gte("bucket", startTime.toISOString())
         .lte("bucket", endTime.toISOString())
         .order("bucket", { ascending: true })
         .range(page * pageSize, (page + 1) * pageSize - 1);
-
-      if (mic) {
-        query = query.eq("venue", mic);
-      }
-
-      const { data: candlesPage, error: candlesError } = await query;
 
       if (candlesError) {
         console.log("Candles query error, will fallback to trades:", candlesError.message);
@@ -254,8 +339,7 @@ serve(async (req) => {
       }
 
       if (candlesPage && candlesPage.length > 0) {
-        allData = allData.concat(candlesPage);
-        if (!venueUsed) venueUsed = candlesPage[0].venue;
+        allCandles = allCandles.concat(candlesPage);
         hasMore = candlesPage.length === pageSize;
         page++;
         usedCandles = true;
@@ -268,27 +352,30 @@ serve(async (req) => {
       }
     }
 
-    // If no candles data, fallback to trades_normalized
-    if (allData.length === 0) {
+    let aggregatedData: any[] = [];
+
+    if (allCandles.length > 0) {
+      // Aggregate candles across all venues
+      const mergedCandles = aggregateCandlesAcrossVenues(allCandles);
+      // Re-aggregate to requested interval if needed
+      aggregatedData = reaggregateCandlesToInterval(mergedCandles, intervalMinutes);
+      console.log(`Found ${allCandles.length} raw candles, merged to ${mergedCandles.length} candles for ISIN ${isin}`);
+    } else {
+      // Fallback to trades_normalized
       console.log("No candles data, falling back to trades_normalized");
+      let allTrades: any[] = [];
       page = 0;
       hasMore = true;
 
       while (hasMore) {
-        let query = supabase
+        const { data: tradesPage, error: tradesError } = await supabase
           .from("trades_normalized")
-          .select("price, quantity, trade_time, venue")
+          .select("price, quantity, trade_time")
           .eq("symbol", isin)
           .gte("trade_time", startTime.toISOString())
           .lte("trade_time", endTime.toISOString())
           .order("trade_time", { ascending: true })
           .range(page * pageSize, (page + 1) * pageSize - 1);
-
-        if (mic) {
-          query = query.eq("venue", mic);
-        }
-
-        const { data: tradesPage, error: tradesError } = await query;
 
         if (tradesError) {
           console.error("Trades query error:", tradesError);
@@ -299,8 +386,7 @@ serve(async (req) => {
         }
 
         if (tradesPage && tradesPage.length > 0) {
-          allData = allData.concat(tradesPage);
-          if (!venueUsed) venueUsed = tradesPage[0].venue;
+          allTrades = allTrades.concat(tradesPage);
           hasMore = tradesPage.length === pageSize;
           page++;
         } else {
@@ -312,13 +398,11 @@ serve(async (req) => {
           hasMore = false;
         }
       }
+
+      aggregatedData = aggregateTradesIntoCandles(allTrades, intervalMinutes);
       usedCandles = false;
+      console.log(`Found ${allTrades.length} trades, aggregated to ${aggregatedData.length} candles`);
     }
-
-    console.log(`Found ${allData.length} ${usedCandles ? 'candles' : 'trades'} for ISIN ${isin} (MIC: ${mic || 'all'})`);
-
-    // Aggregate to requested interval
-    const aggregatedData = aggregateToCandles(allData, intervalMinutes, usedCandles);
 
     const lastDataPoint = aggregatedData.length > 0 ? aggregatedData[aggregatedData.length - 1] : null;
     const last = lastDataPoint ? lastDataPoint.close : null;
