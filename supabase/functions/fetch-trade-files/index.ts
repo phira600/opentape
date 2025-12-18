@@ -526,15 +526,18 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
     let errorCount = 0
     
     // Fetch files in smaller batches with delay to avoid rate limiting
-    for (let i = 0; i < urlsToTry.length; i += 5) {
-      const batch = urlsToTry.slice(i, i + 5)
+    for (let i = 0; i < urlsToTry.length; i += 3) {
+      const batch = urlsToTry.slice(i, i + 3)
       const results = await Promise.allSettled(
         batch.map(async ({ url, fileName }) => {
           try {
             const response = await fetch(url, {
               headers: { 
-                'Accept': 'text/csv, */*',
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+                'Accept': 'text/csv,text/plain,*/*',
+                'Accept-Language': 'en-US,en;q=0.9',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Referer': 'https://tradereports.nasdaq.com/',
+                'Origin': 'https://tradereports.nasdaq.com',
               }
             })
 
@@ -570,9 +573,9 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
         }
       }
       
-      // Small delay between batches to avoid rate limiting
-      if (i + 5 < urlsToTry.length) {
-        await new Promise(r => setTimeout(r, 100))
+      // Longer delay between batches to avoid rate limiting
+      if (i + 3 < urlsToTry.length) {
+        await new Promise(r => setTimeout(r, 500))
       }
     }
     
