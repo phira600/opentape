@@ -2,7 +2,62 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
+}
+
+// In-memory LRU cache for API key validation
+const API_KEY_CACHE = new Map<string, { valid: boolean; keyId: string | null; expires: number }>();
+const CACHE_TTL_MS = 5 * 60 * 1000;
+const MAX_CACHE_SIZE = 100;
+
+declare const EdgeRuntime: { waitUntil: (promise: Promise<any>) => void };
+
+async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
+  if (!apiKey) return false;
+  
+  const cached = API_KEY_CACHE.get(apiKey);
+  if (cached && cached.expires > Date.now()) {
+    if (cached.valid && cached.keyId) {
+      EdgeRuntime.waitUntil(
+        supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", cached.keyId)
+      );
+    }
+    return cached.valid;
+  }
+  
+  const encoder = new TextEncoder();
+  const data = encoder.encode(apiKey);
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+  const hashArray = Array.from(new Uint8Array(hashBuffer));
+  const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+  
+  const { data: keyData, error } = await supabase
+    .from("api_keys")
+    .select("id, is_active")
+    .eq("key_hash", keyHash)
+    .eq("is_active", true)
+    .maybeSingle();
+  
+  const isValid = !error && !!keyData;
+  
+  if (API_KEY_CACHE.size >= MAX_CACHE_SIZE) {
+    const oldestKey = API_KEY_CACHE.keys().next().value;
+    if (oldestKey) API_KEY_CACHE.delete(oldestKey);
+  }
+  
+  API_KEY_CACHE.set(apiKey, { 
+    valid: isValid, 
+    keyId: keyData?.id || null, 
+    expires: Date.now() + CACHE_TTL_MS 
+  });
+  
+  if (isValid && keyData?.id) {
+    EdgeRuntime.waitUntil(
+      supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyData.id)
+    );
+  }
+  
+  return isValid;
 }
 
 Deno.serve(async (req) => {
@@ -15,6 +70,17 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
+    // Validate API key
+    const apiKey = req.headers.get("x-api-key") || "";
+    const isValid = await validateApiKey(supabase, apiKey);
+    
+    if (!isValid) {
+      return new Response(
+        JSON.stringify({ success: false, error: "Invalid or missing API key" }),
+        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     const url = new URL(req.url)
     const params = Object.fromEntries(url.searchParams)
     
