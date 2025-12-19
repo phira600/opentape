@@ -128,7 +128,7 @@ Headers: x-api-key: your_api_key`,
     path: "/query-symbology",
     method: "GET / POST",
     description:
-      "Search and filter financial instrument reference data. Returns deduplicated records by ISIN with a venues array showing all venues where the instrument trades. No API key required.",
+      "Search and filter financial instrument reference data. Returns deduplicated records by ISIN with a venues array showing all venues where the instrument trades. Requires API key authentication via x-api-key header.",
     parameters: [
       {
         name: "symbol",
@@ -166,7 +166,8 @@ Headers: x-api-key: your_api_key`,
       { name: "limit", type: "number", description: "Applied limit" },
       { name: "offset", type: "number", description: "Applied offset" },
     ],
-    exampleRequest: `GET ${API_BASE_URL}/query-symbology?symbol=VOD&limit=10`,
+    exampleRequest: `GET ${API_BASE_URL}/query-symbology?symbol=VOD&limit=10
+Headers: x-api-key: your_api_key`,
     exampleResponse: `{
   "success": true,
   "data": [
