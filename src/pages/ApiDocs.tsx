@@ -23,7 +23,7 @@ const endpoints: ApiEndpoint[] = [
     name: "Intraday OHLCV",
     path: "/intraday",
     method: "GET / POST",
-    description: "Get intraday OHLCV (Open, High, Low, Close, Volume) candlestick data aggregated directly from trades_normalized. Requires API key authentication via x-api-key header.",
+    description: "Get intraday OHLCV (Open, High, Low, Close, Volume) candlestick data aggregated using the interval parameter.",
     parameters: [
       { name: "isin", type: "string", required: true, description: "ISIN code of the instrument (e.g., GB00BH4HKS39)" },
       { name: "currency", type: "string", required: true, description: "Trading currency (e.g., GBP, EUR)" },
