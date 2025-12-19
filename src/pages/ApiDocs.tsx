@@ -23,17 +23,23 @@ const endpoints: ApiEndpoint[] = [
     name: "Intraday OHLCV",
     path: "/intraday",
     method: "GET / POST",
-    description: "Get intraday OHLCV (Open, High, Low, Close, Volume) candlestick data aggregated using the interval parameter.",
+    description:
+      "Get intraday OHLCV (Open, High, Low, Close, Volume) candlestick data aggregated using the interval parameter.",
     parameters: [
       { name: "isin", type: "string", required: true, description: "ISIN code of the instrument (e.g., GB00BH4HKS39)" },
-      { name: "currency", type: "string", required: true, description: "Trading currency (e.g., GBP, EUR)" },
+      { name: "currency", type: "string", required: true, description: "Instrument currency (e.g., GBP, EUR)" },
       { name: "interval", type: "number", required: false, description: "Candle interval in minutes (default: 1)" },
-      { name: "from", type: "string", required: false, description: "Start datetime in ISO format (default: 00:00 UTC of today)" },
+      {
+        name: "from",
+        type: "string",
+        required: false,
+        description: "Start datetime in ISO format (default: 00:00 UTC of today)",
+      },
       { name: "to", type: "string", required: false, description: "End datetime in ISO format (default: now)" },
     ],
     responseFields: [
       { name: "isin", type: "string", description: "Requested ISIN" },
-      { name: "currency", type: "string", description: "Trading currency" },
+      { name: "currency", type: "string", description: "Instrument currency" },
       { name: "symbol", type: "string", description: "Resolved symbol code" },
       { name: "venue", type: "string", description: "Trading venue" },
       { name: "interval", type: "number", description: "Applied interval in minutes" },
@@ -73,10 +79,21 @@ Headers: x-api-key: your_api_key`,
     name: "Quotes",
     path: "/quotes",
     method: "GET / POST",
-    description: "Get latest quote data (last price, daily high/low/open, volume) aggregated directly from trades_normalized. Supports ISIN:currency pairs or MIC-based queries. Requires API key authentication via x-api-key header.",
+    description:
+      "Get latest quote data (last price, daily high/low/open, volume) aggregated directly from trades_normalized. Supports ISIN:currency pairs or MIC-based queries. Requires API key authentication via x-api-key header.",
     parameters: [
-      { name: "isins", type: "string", required: false, description: "Comma-separated ISINs with optional currency suffix (e.g., 'GB00BH4HKS39:GBP,SE0022419784:SEK')" },
-      { name: "mic", type: "string", required: false, description: "Query all instruments by MIC code (e.g., XLON, XSTO). Returns quotes for all ISINs at that MIC." },
+      {
+        name: "isins",
+        type: "string",
+        required: false,
+        description: "Comma-separated ISINs with optional currency suffix (e.g., 'GB00BH4HKS39:GBP,SE0022419784:SEK')",
+      },
+      {
+        name: "mic",
+        type: "string",
+        required: false,
+        description: "Query all instruments by MIC code (e.g., XLON, XSTO). Returns quotes for all ISINs at that MIC.",
+      },
     ],
     responseFields: [
       { name: "quotes", type: "array", description: "Array of quote objects" },
@@ -118,10 +135,21 @@ Headers: x-api-key: your_api_key`,
     name: "Query Symbology",
     path: "/query-symbology",
     method: "GET / POST",
-    description: "Search and filter financial instrument reference data. Returns deduplicated records by ISIN with a venues array showing all venues where the instrument trades. No API key required.",
+    description:
+      "Search and filter financial instrument reference data. Returns deduplicated records by ISIN with a venues array showing all venues where the instrument trades. No API key required.",
     parameters: [
-      { name: "symbol", type: "string", required: false, description: "Filter by symbol (partial match, case-insensitive)" },
-      { name: "exact", type: "boolean", required: false, description: "If true, match symbol exactly instead of partial match" },
+      {
+        name: "symbol",
+        type: "string",
+        required: false,
+        description: "Filter by symbol (partial match, case-insensitive)",
+      },
+      {
+        name: "exact",
+        type: "boolean",
+        required: false,
+        description: "If true, match symbol exactly instead of partial match",
+      },
       { name: "isin", type: "string", required: false, description: "Filter by ISIN (exact match)" },
       { name: "name", type: "string", required: false, description: "Filter by company name (partial match)" },
       { name: "venue", type: "string", required: false, description: "Filter by venue (e.g., SIS, BXE, DXE)" },
@@ -171,9 +199,7 @@ export default function ApiDocs() {
       <main className="container mx-auto px-4 py-6 space-y-6">
         <div className="space-y-2">
           <h1 className="text-3xl font-bold">API Documentation</h1>
-          <p className="text-muted-foreground">
-            Reference documentation for the Trade Data Hub Market Data APIs
-          </p>
+          <p className="text-muted-foreground">Reference documentation for the Trade Data Hub Market Data APIs</p>
         </div>
 
         <Card>
@@ -184,9 +210,7 @@ export default function ApiDocs() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <code className="bg-muted px-3 py-2 rounded text-sm block overflow-x-auto">
-              {API_BASE_URL}
-            </code>
+            <code className="bg-muted px-3 py-2 rounded text-sm block overflow-x-auto">{API_BASE_URL}</code>
           </CardContent>
         </Card>
 
@@ -197,18 +221,17 @@ export default function ApiDocs() {
           </CardHeader>
           <CardContent className="space-y-4">
             <p className="text-muted-foreground">
-              Include your API key in the <code className="bg-muted px-1.5 py-0.5 rounded text-sm">x-api-key</code> header with every request.
+              Include your API key in the <code className="bg-muted px-1.5 py-0.5 rounded text-sm">x-api-key</code>{" "}
+              header with every request.
             </p>
             <div>
               <h4 className="text-sm font-medium mb-2">Example</h4>
               <pre className="bg-muted p-4 rounded text-sm overflow-x-auto">
-{`curl -X GET "${API_BASE_URL}/quotes?mic=XLON" \\
+                {`curl -X GET "${API_BASE_URL}/quotes?mic=XLON" \\
   -H "x-api-key: your_api_key_here"`}
               </pre>
             </div>
-            <p className="text-sm text-muted-foreground">
-              Generate API keys from the Settings page in the dashboard.
-            </p>
+            <p className="text-sm text-muted-foreground">Generate API keys from the Settings page in the dashboard.</p>
           </CardContent>
         </Card>
 
@@ -222,9 +245,7 @@ export default function ApiDocs() {
                   </Badge>
                   <CardTitle className="text-lg font-mono">{endpoint.path}</CardTitle>
                 </div>
-                <CardDescription className="text-base">
-                  {endpoint.name}
-                </CardDescription>
+                <CardDescription className="text-base">{endpoint.name}</CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <p className="text-muted-foreground">{endpoint.description}</p>
@@ -306,9 +327,7 @@ export default function ApiDocs() {
                     {endpoint.exampleResponse && (
                       <div>
                         <h4 className="text-sm font-medium mb-2">Response</h4>
-                        <pre className="bg-muted p-4 rounded text-sm overflow-x-auto">
-                          {endpoint.exampleResponse}
-                        </pre>
+                        <pre className="bg-muted p-4 rounded text-sm overflow-x-auto">{endpoint.exampleResponse}</pre>
                       </div>
                     )}
                   </TabsContent>
