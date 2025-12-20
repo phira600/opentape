@@ -225,11 +225,40 @@ export default function ApiDocs() {
             <div>
               <h4 className="text-sm font-medium mb-2">Example</h4>
               <pre className="bg-muted p-4 rounded text-sm overflow-x-auto">
-                {`curl -X GET "${API_BASE_URL}/quotes?mic=XLON" \\
+                {`curl -X GET "${API_BASE_URL}/quotes?isins=GB00BH4HKS39:GBP" \\
   -H "x-api-key: your_api_key_here"`}
               </pre>
             </div>
             <p className="text-sm text-muted-foreground">Generate API keys from the Settings page in the dashboard.</p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle>IP Whitelisting</CardTitle>
+            <CardDescription>Optionally restrict API access to specific IP addresses</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-muted-foreground">
+              You can configure IP whitelisting for each API key from the Settings page. When IP addresses are added to a key's whitelist, 
+              only requests from those IPs will be allowed.
+            </p>
+            <div className="space-y-2">
+              <h4 className="text-sm font-medium">How it works:</h4>
+              <ul className="list-disc list-inside text-sm text-muted-foreground space-y-1">
+                <li>If no IPs are configured for an API key, requests from <strong>any IP</strong> are allowed</li>
+                <li>If one or more IPs are whitelisted, <strong>only</strong> those IPs can use the API key</li>
+                <li>Requests from non-whitelisted IPs will receive a <code className="bg-muted px-1.5 py-0.5 rounded">403 Forbidden</code> error</li>
+              </ul>
+            </div>
+            <div>
+              <h4 className="text-sm font-medium mb-2">Error Response</h4>
+              <pre className="bg-muted p-4 rounded text-sm overflow-x-auto">
+                {`{
+  "error": "IP address not allowed"
+}`}
+              </pre>
+            </div>
           </CardContent>
         </Card>
 
