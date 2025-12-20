@@ -49,6 +49,38 @@ export type Database = {
           },
         ]
       }
+      api_key_ip_whitelist: {
+        Row: {
+          api_key_id: string
+          created_at: string
+          description: string | null
+          id: string
+          ip_address: string
+        }
+        Insert: {
+          api_key_id: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          ip_address: string
+        }
+        Update: {
+          api_key_id?: string
+          created_at?: string
+          description?: string | null
+          id?: string
+          ip_address?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "api_key_ip_whitelist_api_key_id_fkey"
+            columns: ["api_key_id"]
+            isOneToOne: false
+            referencedRelation: "api_keys"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       api_keys: {
         Row: {
           created_at: string

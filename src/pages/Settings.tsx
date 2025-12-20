@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Key, Copy, Trash2, Plus } from "lucide-react";
+import { Key, Copy, Trash2, Plus, Shield, ChevronDown, ChevronRight } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -29,6 +29,18 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+
+interface IpWhitelistEntry {
+  id: string;
+  ip_address: string;
+  description: string | null;
+  created_at: string;
+}
 
 interface ApiKey {
   id: string;
@@ -37,6 +49,7 @@ interface ApiKey {
   created_at: string;
   last_used_at: string | null;
   is_active: boolean;
+  ip_whitelist?: IpWhitelistEntry[];
 }
 
 export default function Settings() {
@@ -46,6 +59,10 @@ export default function Settings() {
   const [creatingKey, setCreatingKey] = useState(false);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
+  const [newIpAddress, setNewIpAddress] = useState("");
+  const [newIpDescription, setNewIpDescription] = useState("");
+  const [addingIp, setAddingIp] = useState<string | null>(null);
 
   useEffect(() => {
     fetchApiKeys();
@@ -53,13 +70,27 @@ export default function Settings() {
 
   const fetchApiKeys = async () => {
     try {
-      const { data, error } = await supabase
+      const { data: keys, error: keysError } = await supabase
         .from("api_keys")
         .select("id, name, prefix, created_at, last_used_at, is_active")
         .order("created_at", { ascending: false });
 
-      if (error) throw error;
-      setApiKeys(data || []);
+      if (keysError) throw keysError;
+
+      // Fetch IP whitelist for each key
+      const { data: whitelist, error: whitelistError } = await supabase
+        .from("api_key_ip_whitelist")
+        .select("id, api_key_id, ip_address, description, created_at");
+
+      if (whitelistError) throw whitelistError;
+
+      // Map whitelist entries to their API keys
+      const keysWithWhitelist = (keys || []).map(key => ({
+        ...key,
+        ip_whitelist: (whitelist || []).filter(w => w.api_key_id === key.id),
+      }));
+
+      setApiKeys(keysWithWhitelist);
     } catch (error) {
       console.error("Error fetching API keys:", error);
       toast.error("Failed to load API keys");
@@ -105,7 +136,7 @@ export default function Settings() {
       const { error } = await supabase.from("api_keys").insert({
         name: newKeyName.trim(),
         key_hash: keyHash,
-        prefix: apiKey, // Store the full key as prefix for display
+        prefix: apiKey,
         user_id: user.id,
       });
 
@@ -135,6 +166,58 @@ export default function Settings() {
     }
   };
 
+  const handleAddIp = async (keyId: string) => {
+    if (!newIpAddress.trim()) {
+      toast.error("Please enter an IP address");
+      return;
+    }
+
+    // Basic IP validation
+    const ipRegex = /^(\d{1,3}\.){3}\d{1,3}$/;
+    if (!ipRegex.test(newIpAddress.trim())) {
+      toast.error("Please enter a valid IP address (e.g., 192.168.1.1)");
+      return;
+    }
+
+    try {
+      const { error } = await supabase.from("api_key_ip_whitelist").insert({
+        api_key_id: keyId,
+        ip_address: newIpAddress.trim(),
+        description: newIpDescription.trim() || null,
+      });
+
+      if (error) {
+        if (error.code === "23505") {
+          toast.error("This IP is already whitelisted for this key");
+        } else {
+          throw error;
+        }
+        return;
+      }
+
+      setNewIpAddress("");
+      setNewIpDescription("");
+      setAddingIp(null);
+      fetchApiKeys();
+      toast.success("IP address added to whitelist");
+    } catch (error) {
+      console.error("Error adding IP:", error);
+      toast.error("Failed to add IP address");
+    }
+  };
+
+  const handleDeleteIp = async (ipId: string) => {
+    try {
+      const { error } = await supabase.from("api_key_ip_whitelist").delete().eq("id", ipId);
+      if (error) throw error;
+      fetchApiKeys();
+      toast.success("IP address removed from whitelist");
+    } catch (error) {
+      console.error("Error deleting IP:", error);
+      toast.error("Failed to remove IP address");
+    }
+  };
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
     toast.success("Copied to clipboard");
@@ -144,6 +227,18 @@ export default function Settings() {
     setDialogOpen(false);
     setNewlyCreatedKey(null);
     setNewKeyName("");
+  };
+
+  const toggleKeyExpanded = (keyId: string) => {
+    setExpandedKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(keyId)) {
+        next.delete(keyId);
+      } else {
+        next.add(keyId);
+      }
+      return next;
+    });
   };
 
   return (
@@ -237,79 +332,195 @@ export default function Settings() {
             ) : apiKeys.length === 0 ? (
               <p className="text-muted-foreground">No API keys yet. Create one to get started.</p>
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Name</TableHead>
-                    <TableHead>Key</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Last Used</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead className="w-[100px]">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {apiKeys.map((key) => (
-                    <TableRow key={key.id}>
-                      <TableCell className="font-medium">{key.name}</TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <code className="font-mono text-xs bg-muted px-2 py-1 rounded break-all">
-                            {key.prefix}
-                          </code>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-6 w-6 shrink-0"
-                            onClick={() => copyToClipboard(key.prefix)}
-                          >
-                            <Copy className="h-3 w-3" />
-                          </Button>
+              <div className="space-y-4">
+                {apiKeys.map((key) => (
+                  <Collapsible
+                    key={key.id}
+                    open={expandedKeys.has(key.id)}
+                    onOpenChange={() => toggleKeyExpanded(key.id)}
+                  >
+                    <div className="border rounded-lg">
+                      <div className="p-4">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-4 flex-1 min-w-0">
+                            <CollapsibleTrigger asChild>
+                              <Button variant="ghost" size="sm" className="p-0 h-6 w-6">
+                                {expandedKeys.has(key.id) ? (
+                                  <ChevronDown className="h-4 w-4" />
+                                ) : (
+                                  <ChevronRight className="h-4 w-4" />
+                                )}
+                              </Button>
+                            </CollapsibleTrigger>
+                            <div className="min-w-0 flex-1">
+                              <div className="flex items-center gap-2">
+                                <span className="font-medium">{key.name}</span>
+                                <Badge variant={key.is_active ? "default" : "secondary"}>
+                                  {key.is_active ? "Active" : "Inactive"}
+                                </Badge>
+                                {key.ip_whitelist && key.ip_whitelist.length > 0 && (
+                                  <Badge variant="outline" className="gap-1">
+                                    <Shield className="h-3 w-3" />
+                                    {key.ip_whitelist.length} IP{key.ip_whitelist.length !== 1 ? "s" : ""}
+                                  </Badge>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-2 mt-1">
+                                <code className="font-mono text-xs bg-muted px-2 py-1 rounded truncate">
+                                  {key.prefix}
+                                </code>
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-6 w-6 shrink-0"
+                                  onClick={() => copyToClipboard(key.prefix)}
+                                >
+                                  <Copy className="h-3 w-3" />
+                                </Button>
+                              </div>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
+                            <span>Created: {new Date(key.created_at).toLocaleDateString()}</span>
+                            <span>Last used: {key.last_used_at ? new Date(key.last_used_at).toLocaleDateString() : "Never"}</span>
+                            <AlertDialog>
+                              <AlertDialogTrigger asChild>
+                                <Button variant="ghost" size="icon">
+                                  <Trash2 className="h-4 w-4 text-destructive" />
+                                </Button>
+                              </AlertDialogTrigger>
+                              <AlertDialogContent>
+                                <AlertDialogHeader>
+                                  <AlertDialogTitle>Delete API Key</AlertDialogTitle>
+                                  <AlertDialogDescription>
+                                    Are you sure you want to delete "{key.name}"? This action cannot be undone and any applications using this key will stop working.
+                                  </AlertDialogDescription>
+                                </AlertDialogHeader>
+                                <AlertDialogFooter>
+                                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                  <AlertDialogAction
+                                    onClick={() => handleDeleteKey(key.id)}
+                                    className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                  >
+                                    Delete
+                                  </AlertDialogAction>
+                                </AlertDialogFooter>
+                              </AlertDialogContent>
+                            </AlertDialog>
+                          </div>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        {new Date(key.created_at).toLocaleDateString()}
-                      </TableCell>
-                      <TableCell>
-                        {key.last_used_at
-                          ? new Date(key.last_used_at).toLocaleDateString()
-                          : "Never"}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={key.is_active ? "default" : "secondary"}>
-                          {key.is_active ? "Active" : "Inactive"}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
-                            <Button variant="ghost" size="icon">
-                              <Trash2 className="h-4 w-4 text-destructive" />
-                            </Button>
-                          </AlertDialogTrigger>
-                          <AlertDialogContent>
-                            <AlertDialogHeader>
-                              <AlertDialogTitle>Delete API Key</AlertDialogTitle>
-                              <AlertDialogDescription>
-                                Are you sure you want to delete "{key.name}"? This action cannot be undone and any applications using this key will stop working.
-                              </AlertDialogDescription>
-                            </AlertDialogHeader>
-                            <AlertDialogFooter>
-                              <AlertDialogCancel>Cancel</AlertDialogCancel>
-                              <AlertDialogAction
-                                onClick={() => handleDeleteKey(key.id)}
-                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      </div>
+
+                      <CollapsibleContent>
+                        <div className="border-t p-4 bg-muted/30">
+                          <div className="space-y-4">
+                            <div className="flex items-center justify-between">
+                              <div>
+                                <h4 className="font-medium flex items-center gap-2">
+                                  <Shield className="h-4 w-4" />
+                                  IP Whitelist
+                                </h4>
+                                <p className="text-sm text-muted-foreground">
+                                  {key.ip_whitelist?.length === 0
+                                    ? "No IP restrictions. Requests from any IP are allowed."
+                                    : "Only requests from these IP addresses are allowed."}
+                                </p>
+                              </div>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => setAddingIp(addingIp === key.id ? null : key.id)}
                               >
-                                Delete
-                              </AlertDialogAction>
-                            </AlertDialogFooter>
-                          </AlertDialogContent>
-                        </AlertDialog>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                                <Plus className="h-4 w-4 mr-2" />
+                                Add IP
+                              </Button>
+                            </div>
+
+                            {addingIp === key.id && (
+                              <div className="flex gap-2 items-end">
+                                <div className="flex-1">
+                                  <Label htmlFor={`ip-${key.id}`} className="text-sm">IP Address</Label>
+                                  <Input
+                                    id={`ip-${key.id}`}
+                                    placeholder="e.g., 192.168.1.1"
+                                    value={newIpAddress}
+                                    onChange={(e) => setNewIpAddress(e.target.value)}
+                                  />
+                                </div>
+                                <div className="flex-1">
+                                  <Label htmlFor={`desc-${key.id}`} className="text-sm">Description (optional)</Label>
+                                  <Input
+                                    id={`desc-${key.id}`}
+                                    placeholder="e.g., Office server"
+                                    value={newIpDescription}
+                                    onChange={(e) => setNewIpDescription(e.target.value)}
+                                  />
+                                </div>
+                                <Button onClick={() => handleAddIp(key.id)}>Add</Button>
+                                <Button variant="outline" onClick={() => {
+                                  setAddingIp(null);
+                                  setNewIpAddress("");
+                                  setNewIpDescription("");
+                                }}>Cancel</Button>
+                              </div>
+                            )}
+
+                            {key.ip_whitelist && key.ip_whitelist.length > 0 && (
+                              <Table>
+                                <TableHeader>
+                                  <TableRow>
+                                    <TableHead>IP Address</TableHead>
+                                    <TableHead>Description</TableHead>
+                                    <TableHead>Added</TableHead>
+                                    <TableHead className="w-[60px]"></TableHead>
+                                  </TableRow>
+                                </TableHeader>
+                                <TableBody>
+                                  {key.ip_whitelist.map((ip) => (
+                                    <TableRow key={ip.id}>
+                                      <TableCell className="font-mono">{ip.ip_address}</TableCell>
+                                      <TableCell className="text-muted-foreground">
+                                        {ip.description || "-"}
+                                      </TableCell>
+                                      <TableCell>{new Date(ip.created_at).toLocaleDateString()}</TableCell>
+                                      <TableCell>
+                                        <AlertDialog>
+                                          <AlertDialogTrigger asChild>
+                                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                                              <Trash2 className="h-4 w-4 text-destructive" />
+                                            </Button>
+                                          </AlertDialogTrigger>
+                                          <AlertDialogContent>
+                                            <AlertDialogHeader>
+                                              <AlertDialogTitle>Remove IP</AlertDialogTitle>
+                                              <AlertDialogDescription>
+                                                Remove {ip.ip_address} from the whitelist? Requests from this IP will no longer be allowed if other IPs are still whitelisted.
+                                              </AlertDialogDescription>
+                                            </AlertDialogHeader>
+                                            <AlertDialogFooter>
+                                              <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                              <AlertDialogAction
+                                                onClick={() => handleDeleteIp(ip.id)}
+                                                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                              >
+                                                Remove
+                                              </AlertDialogAction>
+                                            </AlertDialogFooter>
+                                          </AlertDialogContent>
+                                        </AlertDialog>
+                                      </TableCell>
+                                    </TableRow>
+                                  ))}
+                                </TableBody>
+                              </Table>
+                            )}
+                          </div>
+                        </div>
+                      </CollapsibleContent>
+                    </div>
+                  </Collapsible>
+                ))}
+              </div>
             )}
           </CardContent>
         </Card>

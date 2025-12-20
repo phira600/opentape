@@ -12,8 +12,8 @@ const MAX_CACHE_SIZE = 100;
 
 declare const EdgeRuntime: { waitUntil: (promise: Promise<any>) => void };
 
-async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
-  if (!apiKey) return false;
+async function validateApiKey(supabase: any, apiKey: string): Promise<{ valid: boolean; keyId: string | null }> {
+  if (!apiKey) return { valid: false, keyId: null };
   
   const cached = API_KEY_CACHE.get(apiKey);
   if (cached && cached.expires > Date.now()) {
@@ -22,7 +22,7 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
         supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", cached.keyId)
       );
     }
-    return cached.valid;
+    return { valid: cached.valid, keyId: cached.keyId };
   }
   
   const encoder = new TextEncoder();
@@ -57,7 +57,32 @@ async function validateApiKey(supabase: any, apiKey: string): Promise<boolean> {
     );
   }
   
-  return isValid;
+  return { valid: isValid, keyId: keyData?.id || null };
+}
+
+async function checkIpWhitelist(supabase: any, keyId: string, clientIp: string): Promise<boolean> {
+  const { data: whitelist, error } = await supabase
+    .from("api_key_ip_whitelist")
+    .select("ip_address")
+    .eq("api_key_id", keyId);
+  
+  if (error) {
+    console.error("IP whitelist check error:", error);
+    return true;
+  }
+  
+  if (!whitelist || whitelist.length === 0) {
+    return true;
+  }
+  
+  return whitelist.some((w: { ip_address: string }) => w.ip_address === clientIp);
+}
+
+function getClientIp(req: Request): string {
+  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() 
+    || req.headers.get("cf-connecting-ip") 
+    || req.headers.get("x-real-ip")
+    || "unknown";
 }
 
 Deno.serve(async (req) => {
@@ -72,13 +97,26 @@ Deno.serve(async (req) => {
   try {
     // Validate API key
     const apiKey = req.headers.get("x-api-key") || "";
-    const isValid = await validateApiKey(supabase, apiKey);
+    const { valid, keyId } = await validateApiKey(supabase, apiKey);
     
-    if (!isValid) {
+    if (!valid) {
       return new Response(
         JSON.stringify({ success: false, error: "Invalid or missing API key" }),
         { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
       );
+    }
+
+    // Check IP whitelist
+    const clientIp = getClientIp(req);
+    if (keyId) {
+      const ipAllowed = await checkIpWhitelist(supabase, keyId, clientIp);
+      if (!ipAllowed) {
+        console.log(`IP ${clientIp} not allowed for API key ${keyId}`);
+        return new Response(
+          JSON.stringify({ success: false, error: "IP address not allowed" }),
+          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
     const url = new URL(req.url)
