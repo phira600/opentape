@@ -72,11 +72,11 @@ export default function Login() {
         <CardHeader className="text-center">
           <div className="flex items-center justify-center gap-2 mb-2">
             <TrendingUp className="h-8 w-8 text-primary" />
-            <span className="text-2xl font-bold">Trade Aggregator</span>
+            <span className="text-2xl font-bold">opentape</span>
           </div>
           <CardTitle>Welcome</CardTitle>
           <CardDescription>
-            Sign in to access the MMT Analytics Dashboard
+            Sign in to access the opentape dashboard
           </CardDescription>
         </CardHeader>
         <CardContent>

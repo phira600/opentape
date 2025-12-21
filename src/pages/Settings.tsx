@@ -259,7 +259,7 @@ export default function Settings() {
                   API Keys
                 </CardTitle>
                 <CardDescription>
-                  Manage API keys for accessing the Trade Data Hub APIs
+                  Manage API keys for accessing the opentape APIs
                 </CardDescription>
               </div>
               <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>

@@ -197,7 +197,7 @@ export default function ApiDocs() {
       <main className="container mx-auto px-4 py-6 space-y-6">
         <div className="space-y-2">
           <h1 className="text-3xl font-bold">API Documentation</h1>
-          <p className="text-muted-foreground">Reference documentation for the Trade Data Hub Market Data APIs</p>
+          <p className="text-muted-foreground">Reference documentation for the opentape Market Data APIs</p>
         </div>
 
         <Card>

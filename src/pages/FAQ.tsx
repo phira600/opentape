@@ -116,7 +116,7 @@ export default function FAQ() {
                 right to protect its servers. If you request data 100 times a second, they will block you for a 
                 <strong> Denial of Service (DoS)</strong> or "Abusive Scraping."
               </p>
-              <p className="text-muted-foreground">The Fix: Use the built-in rate limits in Art13OpenTape which scrapes about once every 1 minute per exchange and filetype.<strong>The Fix:</strong> Use the built-in rate limits in Art13OpenTape. Do not poll faster than once every 15-20 minutes per instrument.
+              <p className="text-muted-foreground">The Fix: Use the built-in rate limits in opentape which scrapes about once every 1 minute per exchange and filetype.<strong>The Fix:</strong> Use the built-in rate limits in opentape. Do not poll faster than once every 15-20 minutes per instrument.
               </p>
             </div>
 
@@ -124,7 +124,7 @@ export default function FAQ() {
               <h3 className="font-semibold mb-2">2. Do I need to pay for a "Direct Connection"?</h3>
               <p className="text-muted-foreground">
                 <strong className="text-foreground">No.</strong> Exchanges often charge thousands of euros for a high-speed API connection. 
-                However, they must provide the delayed data via a "human-readable" channel (like a website) for free. Art13OpenTape 
+                However, they must provide the delayed data via a "human-readable" channel (like a website) for free. opentape 
                 automates the reading of that free channel. You do not need the paid API.
               </p>
             </div>
