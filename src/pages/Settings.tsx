@@ -8,7 +8,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Badge } from "@/components/ui/badge";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
-import { Key, Copy, Trash2, Plus, Shield, ChevronDown, ChevronRight } from "lucide-react";
+import { Key, Copy, Trash2, Plus, Shield, ChevronDown, ChevronRight, Users, Mail, Loader2 } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -52,24 +52,51 @@ interface ApiKey {
   ip_whitelist?: IpWhitelistEntry[];
 }
 
+interface Invitation {
+  id: string;
+  email: string;
+  created_at: string;
+  expires_at: string;
+  accepted_at: string | null;
+}
+
 export default function Settings() {
   const [apiKeys, setApiKeys] = useState<ApiKey[]>([]);
+  const [invitations, setInvitations] = useState<Invitation[]>([]);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [loading, setLoading] = useState(true);
   const [newKeyName, setNewKeyName] = useState("");
   const [creatingKey, setCreatingKey] = useState(false);
   const [newlyCreatedKey, setNewlyCreatedKey] = useState<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [inviteDialogOpen, setInviteDialogOpen] = useState(false);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [sendingInvite, setSendingInvite] = useState(false);
   const [expandedKeys, setExpandedKeys] = useState<Set<string>>(new Set());
   const [newIpAddress, setNewIpAddress] = useState("");
   const [newIpDescription, setNewIpDescription] = useState("");
   const [addingIp, setAddingIp] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchApiKeys();
+    fetchData();
   }, []);
 
-  const fetchApiKeys = async () => {
+  const fetchData = async () => {
     try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+
+      // Check if user is admin
+      const { data: roleData } = await supabase
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", user.id)
+        .eq("role", "admin")
+        .single();
+
+      setIsAdmin(!!roleData);
+
+      // Fetch API keys
       const { data: keys, error: keysError } = await supabase
         .from("api_keys")
         .select("id, name, prefix, created_at, last_used_at, is_active")
@@ -91,9 +118,21 @@ export default function Settings() {
       }));
 
       setApiKeys(keysWithWhitelist);
+
+      // Fetch invitations if admin
+      if (roleData) {
+        const { data: invites, error: invitesError } = await supabase
+          .from("invitations")
+          .select("id, email, created_at, expires_at, accepted_at")
+          .order("created_at", { ascending: false });
+
+        if (!invitesError) {
+          setInvitations(invites || []);
+        }
+      }
     } catch (error) {
-      console.error("Error fetching API keys:", error);
-      toast.error("Failed to load API keys");
+      console.error("Error fetching data:", error);
+      toast.error("Failed to load settings");
     } finally {
       setLoading(false);
     }
@@ -144,7 +183,7 @@ export default function Settings() {
 
       setNewlyCreatedKey(apiKey);
       setNewKeyName("");
-      fetchApiKeys();
+      fetchData();
       toast.success("API key created successfully");
     } catch (error) {
       console.error("Error creating API key:", error);
@@ -158,7 +197,7 @@ export default function Settings() {
     try {
       const { error } = await supabase.from("api_keys").delete().eq("id", id);
       if (error) throw error;
-      fetchApiKeys();
+      fetchData();
       toast.success("API key deleted");
     } catch (error) {
       console.error("Error deleting API key:", error);
@@ -198,7 +237,7 @@ export default function Settings() {
       setNewIpAddress("");
       setNewIpDescription("");
       setAddingIp(null);
-      fetchApiKeys();
+      fetchData();
       toast.success("IP address added to whitelist");
     } catch (error) {
       console.error("Error adding IP:", error);
@@ -210,11 +249,61 @@ export default function Settings() {
     try {
       const { error } = await supabase.from("api_key_ip_whitelist").delete().eq("id", ipId);
       if (error) throw error;
-      fetchApiKeys();
+      fetchData();
       toast.success("IP address removed from whitelist");
     } catch (error) {
       console.error("Error deleting IP:", error);
       toast.error("Failed to remove IP address");
+    }
+  };
+
+  const handleSendInvite = async () => {
+    if (!inviteEmail.trim()) {
+      toast.error("Please enter an email address");
+      return;
+    }
+
+    setSendingInvite(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error("You must be logged in");
+        return;
+      }
+
+      const response = await supabase.functions.invoke("invite-user", {
+        body: { email: inviteEmail.trim() },
+      });
+
+      if (response.error) {
+        throw new Error(response.error.message || "Failed to send invitation");
+      }
+
+      if (response.data?.error) {
+        throw new Error(response.data.error);
+      }
+
+      toast.success("Invitation sent successfully");
+      setInviteEmail("");
+      setInviteDialogOpen(false);
+      fetchData();
+    } catch (error: any) {
+      console.error("Error sending invite:", error);
+      toast.error(error.message || "Failed to send invitation");
+    } finally {
+      setSendingInvite(false);
+    }
+  };
+
+  const handleDeleteInvite = async (id: string) => {
+    try {
+      const { error } = await supabase.from("invitations").delete().eq("id", id);
+      if (error) throw error;
+      fetchData();
+      toast.success("Invitation deleted");
+    } catch (error) {
+      console.error("Error deleting invitation:", error);
+      toast.error("Failed to delete invitation");
     }
   };
 
@@ -249,6 +338,126 @@ export default function Settings() {
           <h1 className="text-3xl font-bold">Settings</h1>
           <p className="text-muted-foreground">Manage your API keys and preferences</p>
         </div>
+
+        {/* User Management - Admin Only */}
+        {isAdmin && (
+          <Card>
+            <CardHeader>
+              <div className="flex items-center justify-between">
+                <div>
+                  <CardTitle className="flex items-center gap-2">
+                    <Users className="h-5 w-5" />
+                    User Management
+                  </CardTitle>
+                  <CardDescription>
+                    Invite new users to opentape (invite-only access)
+                  </CardDescription>
+                </div>
+                <Dialog open={inviteDialogOpen} onOpenChange={setInviteDialogOpen}>
+                  <DialogTrigger asChild>
+                    <Button>
+                      <Mail className="h-4 w-4 mr-2" />
+                      Invite User
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Invite New User</DialogTitle>
+                      <DialogDescription>
+                        Send an invitation email to grant access to opentape.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="inviteEmail">Email Address</Label>
+                        <Input
+                          id="inviteEmail"
+                          type="email"
+                          placeholder="user@example.com"
+                          value={inviteEmail}
+                          onChange={(e) => setInviteEmail(e.target.value)}
+                        />
+                      </div>
+                    </div>
+                    <DialogFooter>
+                      <Button onClick={handleSendInvite} disabled={sendingInvite}>
+                        {sendingInvite && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                        Send Invitation
+                      </Button>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {invitations.length === 0 ? (
+                <p className="text-muted-foreground">No pending invitations.</p>
+              ) : (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Email</TableHead>
+                      <TableHead>Status</TableHead>
+                      <TableHead>Sent</TableHead>
+                      <TableHead>Expires</TableHead>
+                      <TableHead className="w-[60px]"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {invitations.map((invite) => {
+                      const isExpired = new Date(invite.expires_at) < new Date();
+                      const isAccepted = !!invite.accepted_at;
+                      return (
+                        <TableRow key={invite.id}>
+                          <TableCell>{invite.email}</TableCell>
+                          <TableCell>
+                            {isAccepted ? (
+                              <Badge variant="default">Accepted</Badge>
+                            ) : isExpired ? (
+                              <Badge variant="destructive">Expired</Badge>
+                            ) : (
+                              <Badge variant="secondary">Pending</Badge>
+                            )}
+                          </TableCell>
+                          <TableCell>{new Date(invite.created_at).toLocaleDateString()}</TableCell>
+                          <TableCell>{new Date(invite.expires_at).toLocaleDateString()}</TableCell>
+                          <TableCell>
+                            {!isAccepted && (
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="icon" className="h-8 w-8">
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete Invitation</AlertDialogTitle>
+                                    <AlertDialogDescription>
+                                      Delete the invitation for {invite.email}? They will no longer be able to sign up.
+                                    </AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction
+                                      onClick={() => handleDeleteInvite(invite.id)}
+                                      className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                                    >
+                                      Delete
+                                    </AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         <Card>
           <CardHeader>
