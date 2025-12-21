@@ -206,7 +206,7 @@ export default function ApiTest() {
         <div className="space-y-2">
           <h1 className="text-3xl font-bold">API Test Console</h1>
           <p className="text-muted-foreground">
-            Test the Trade Data Hub Market Data APIs interactively
+            Test the opentape Market Data APIs interactively
           </p>
         </div>
 

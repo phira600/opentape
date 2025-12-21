@@ -9,7 +9,7 @@ export default function TermsOfUse() {
         
         <div className="prose prose-invert max-w-none space-y-6">
           <p className="text-muted-foreground">
-            <strong>Product Name:</strong> Art13OpenTape<br />
+            <strong>Product Name:</strong> opentape<br />
             <strong>License Type:</strong> Open Source (Recommended: MIT or Apache 2.0)
           </p>
 
@@ -19,7 +19,7 @@ export default function TermsOfUse() {
               The Software is provided strictly as a technical utility to facilitate the retrieval of publicly available information.
             </p>
             <p className="text-muted-foreground">
-              <strong>The Software is NOT a Data Provider:</strong> Art13OpenTape does not host, cache, redistribute, or sub-license market data. It acts solely as a "User Agent" or "Connector" that enables the User to fetch data directly from third-party sources (Trading Venues/Exchanges) to the User's local system.
+              <strong>The Software is NOT a Data Provider:</strong> opentape does not host, cache, redistribute, or sub-license market data. It acts solely as a "User Agent" or "Connector" that enables the User to fetch data directly from third-party sources (Trading Venues/Exchanges) to the User's local system.
             </p>
             <p className="text-muted-foreground">
               <strong>No Commercial Link:</strong> The Developer of this Software has no commercial relationship with the data sources and does not charge fees for the data.
