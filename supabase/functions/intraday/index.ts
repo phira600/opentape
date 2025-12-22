@@ -244,7 +244,8 @@ serve(async (req) => {
 
     console.log(`Fetching intraday data for ISIN=${isin}, currency=${currency}`);
 
-    // Look up instrument name from symbology
+    // Look up instrument name from symbology - try exact currency match first, then fall back to just ISIN
+    let symbolName: string | null = null;
     const { data: symbologyData } = await supabase
       .from("symbology")
       .select("name")
@@ -253,7 +254,18 @@ serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    const symbolName = symbologyData?.name || null;
+    if (symbologyData?.name) {
+      symbolName = symbologyData.name;
+    } else {
+      // Fallback: query by ISIN only (handles GBP vs GBX mismatch)
+      const { data: fallbackData } = await supabase
+        .from("symbology")
+        .select("name")
+        .eq("isin", isin)
+        .limit(1)
+        .maybeSingle();
+      symbolName = fallbackData?.name || null;
+    }
 
     // Query candles directly by ISIN and currency
     const pageSize = 1000;
