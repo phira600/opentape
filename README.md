@@ -6,16 +6,31 @@ Real-time trade data aggregation and API platform.
 
 This application uses invite-only authentication. To create the first admin user:
 
-1. **Create the user account** in the Lovable Cloud backend authentication system
-2. **Assign admin role** by running this SQL in the database:
+### Option 1: Automatic Setup (Recommended)
+
+Call the provisioning endpoint once after deployment:
+
+```bash
+curl -X POST https://skexlbkhxhoeyghquvux.supabase.co/functions/v1/provision-default-admin
+```
+
+This creates a default admin user:
+- **Email:** `admin@opentape.local`
+- **Password:** `admin123!`
+
+⚠️ **Change the password immediately after first login!**
+
+### Option 2: Manual Setup
+
+1. Create a user account in the backend authentication system
+2. Assign admin role by running this SQL:
 
 ```sql
--- Replace 'USER_UUID_HERE' with the actual user ID from auth.users
 INSERT INTO public.user_roles (user_id, role)
 VALUES ('USER_UUID_HERE', 'admin');
 ```
 
-3. Once the admin user is set up, they can invite other users from the Settings page.
+Once the admin user is set up, they can invite other users from the Settings page.
 
 ## Project info
 
