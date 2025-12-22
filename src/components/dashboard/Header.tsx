@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { TrendingUp, LogOut, FileText, FlaskConical, Settings, HelpCircle, Menu, X } from "lucide-react";
+import { LogOut, FileText, FlaskConical, Settings, HelpCircle, Menu } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -9,6 +9,7 @@ import {
   SheetContent,
   SheetTrigger,
 } from "@/components/ui/sheet";
+import logo from "@/assets/logo.png";
 
 export function Header() {
   const { user, signOut } = useAuth();
@@ -28,9 +29,8 @@ export function Header() {
     <header className="border-b bg-card">
       <div className="container mx-auto px-4 py-4 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <Link to="/" className="flex items-center gap-2">
-            <TrendingUp className="h-6 w-6 text-primary" />
-            <h1 className="text-xl font-bold">opentape</h1>
+          <Link to="/" className="flex items-center">
+            <img src={logo} alt="opentape" className="h-8" />
           </Link>
           <nav className="hidden md:flex items-center gap-1">
             {navItems.map((item) => (

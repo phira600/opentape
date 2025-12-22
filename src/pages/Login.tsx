@@ -6,7 +6,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { useToast } from "@/hooks/use-toast";
-import { Loader2, TrendingUp } from "lucide-react";
+import { Loader2 } from "lucide-react";
+import logo from "@/assets/logo.png";
 
 export default function Login() {
   const navigate = useNavigate();
@@ -44,9 +45,8 @@ export default function Login() {
     <div className="min-h-screen flex items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
         <CardHeader className="text-center">
-          <div className="flex items-center justify-center gap-2 mb-2">
-            <TrendingUp className="h-8 w-8 text-primary" />
-            <span className="text-2xl font-bold">opentape</span>
+          <div className="flex items-center justify-center mb-4">
+            <img src={logo} alt="opentape" className="h-12" />
           </div>
           <CardTitle>Welcome</CardTitle>
           <CardDescription>
