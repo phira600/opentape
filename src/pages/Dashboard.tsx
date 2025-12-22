@@ -55,6 +55,26 @@ export default function Dashboard() {
   useEffect(() => {
     // Provision default jobs on first load, then fetch
     provisionDefaultJobs().then(() => fetchJobs());
+
+    // Subscribe to realtime updates for job status changes
+    const channel = supabase
+      .channel('job-status-changes')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'job_configurations',
+        },
+        () => {
+          fetchJobs();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   return (
