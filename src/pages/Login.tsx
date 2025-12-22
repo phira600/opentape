@@ -85,6 +85,14 @@ export default function Login() {
           <p className="text-center text-sm text-muted-foreground mt-4">
             Access is by invitation only. Contact your administrator for access.
           </p>
+          <div className="flex justify-center gap-4 mt-4 text-sm">
+            <a href="/faq" className="text-muted-foreground hover:text-foreground transition-colors">
+              FAQ
+            </a>
+            <a href="/terms-of-use" className="text-muted-foreground hover:text-foreground transition-colors">
+              Terms of Use
+            </a>
+          </div>
         </CardContent>
       </Card>
     </div>
