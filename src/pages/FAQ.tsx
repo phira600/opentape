@@ -1,10 +1,10 @@
-import { Header } from "@/components/dashboard/Header";
+import { SmartHeader } from "@/components/SmartHeader";
 import { CheckCircle2, XCircle, AlertCircle, Shield, Scale, FileText } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 export default function FAQ() {
   return <div className="min-h-screen bg-background">
-      <Header />
+      <SmartHeader />
       <main className="container mx-auto px-4 py-8 max-w-4xl">
         <div className="flex items-center gap-3 mb-2">
           <Scale className="h-8 w-8 text-primary" />

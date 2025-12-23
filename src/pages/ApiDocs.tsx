@@ -1,4 +1,4 @@
-import { Header } from "@/components/dashboard/Header";
+import { SmartHeader } from "@/components/SmartHeader";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -193,7 +193,7 @@ Headers: x-api-key: your_api_key`,
 export default function ApiDocs() {
   return (
     <div className="min-h-screen bg-background">
-      <Header />
+      <SmartHeader />
       <main className="container mx-auto px-4 py-6 space-y-6">
         <div className="space-y-2">
           <h1 className="text-3xl font-bold">API Documentation</h1>

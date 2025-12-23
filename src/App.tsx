@@ -31,22 +31,8 @@ const App = () => (
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/api-docs"
-            element={
-              <ProtectedRoute>
-                <ApiDocs />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/api-test"
-            element={
-              <ProtectedRoute>
-                <ApiTest />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/api-docs" element={<ApiDocs />} />
+          <Route path="/api-test" element={<ApiTest />} />
           <Route
             path="/settings"
             element={
