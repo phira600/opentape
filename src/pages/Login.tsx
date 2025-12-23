@@ -85,11 +85,17 @@ export default function Login() {
           <p className="text-center text-sm text-muted-foreground mt-4">
             Access is by invitation only. Contact your administrator for access.
           </p>
-          <div className="flex justify-center gap-4 mt-4 text-sm">
+          <div className="flex justify-center flex-wrap gap-4 mt-4 text-sm">
+            <a href="/api-docs" className="text-muted-foreground hover:text-foreground transition-colors">
+              API Docs
+            </a>
+            <a href="/api-test" className="text-muted-foreground hover:text-foreground transition-colors">
+              API Test
+            </a>
             <a href="/faq" className="text-muted-foreground hover:text-foreground transition-colors">
               FAQ
             </a>
-            <a href="/terms-of-use" className="text-muted-foreground hover:text-foreground transition-colors">
+            <a href="/terms" className="text-muted-foreground hover:text-foreground transition-colors">
               Terms of Use
             </a>
           </div>

@@ -55,22 +55,8 @@ const App = () => (
               </ProtectedRoute>
             }
           />
-          <Route
-            path="/terms"
-            element={
-              <ProtectedRoute>
-                <TermsOfUse />
-              </ProtectedRoute>
-            }
-          />
-          <Route
-            path="/faq"
-            element={
-              <ProtectedRoute>
-                <FAQ />
-              </ProtectedRoute>
-            }
-          />
+          <Route path="/terms" element={<TermsOfUse />} />
+          <Route path="/faq" element={<FAQ />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
