@@ -161,6 +161,16 @@ Deno.serve(async (req) => {
         errors: errorCount
       }
     })
+
+    // Update cron job configuration
+    await supabase
+      .from('cron_job_configurations')
+      .update({
+        last_run_at: new Date().toISOString(),
+        last_status: 'success',
+        last_error: null
+      })
+      .eq('id', 'cboe-sis-symbology')
     
     return new Response(
       JSON.stringify({ 
@@ -175,6 +185,16 @@ Deno.serve(async (req) => {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error(`Function error: ${errorMessage}`)
+
+    // Update cron job configuration with error
+    await supabase
+      .from('cron_job_configurations')
+      .update({
+        last_run_at: new Date().toISOString(),
+        last_status: 'error',
+        last_error: errorMessage
+      })
+      .eq('id', 'cboe-sis-symbology')
     
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
