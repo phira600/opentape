@@ -40,6 +40,16 @@ Deno.serve(async (req) => {
     // Refresh the materialized view after cleanup
     await supabase.rpc('refresh_candles')
 
+    // Update cron job configuration
+    await supabase
+      .from('cron_job_configurations')
+      .update({
+        last_run_at: new Date().toISOString(),
+        last_status: 'success',
+        last_error: null
+      })
+      .eq('id', 'cleanup-old-trades')
+
     return new Response(
       JSON.stringify({ 
         success: true, 

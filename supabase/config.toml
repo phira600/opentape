@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.fetch-symbology]
 verify_jwt = false
+
+[functions.refresh-candles]
+verify_jwt = false
