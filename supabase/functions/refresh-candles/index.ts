@@ -12,7 +12,19 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  const supabase = createClient(supabaseUrl, supabaseServiceKey)
+  
+  // Create client with extended timeout for long-running queries
+  const supabase = createClient(supabaseUrl, supabaseServiceKey, {
+    db: {
+      schema: 'public',
+    },
+    global: {
+      headers: {
+        // Set statement timeout to 60 seconds
+        'x-supabase-postgres-config': 'statement_timeout=60000'
+      }
+    }
+  })
 
   const startTime = Date.now()
 
