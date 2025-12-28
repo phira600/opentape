@@ -17,29 +17,42 @@ Deno.serve(async (req) => {
   const startTime = Date.now()
 
   try {
-    // First check if we have trade data to process
-    const { data: tradeStats, error: statsError } = await supabase
+    // Get last refresh time from mv_refresh_log
+    const { data: lastRefresh } = await supabase
+      .from('mv_refresh_log')
+      .select('refreshed_at')
+      .eq('view_name', 'candles_1min')
+      .order('refreshed_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    // Determine the time range to process
+    // Use 5-minute lookback for backdated trades, or last 30 minutes for first run
+    const lookbackMinutes = lastRefresh ? 5 : 30
+    const processFrom = lastRefresh 
+      ? new Date(new Date(lastRefresh.refreshed_at).getTime() - lookbackMinutes * 60 * 1000)
+      : new Date(Date.now() - 30 * 60 * 1000)
+
+    console.log(`Processing trades from ${processFrom.toISOString()} (lookback: ${lookbackMinutes} min)`)
+
+    // Get max trade time to know our processing window
+    const { data: maxTradeData } = await supabase
       .from('trades_normalized')
-      .select('id', { count: 'exact', head: true })
-    
-    const tradeCount = tradeStats ? (statsError ? 0 : (await supabase.from('trades_normalized').select('*', { count: 'exact', head: true })).count || 0) : 0
-    
-    // Get actual count
-    const { count: actualCount } = await supabase
-      .from('trades_normalized')
-      .select('*', { count: 'exact', head: true })
-    
-    console.log(`Trade count in database: ${actualCount || 0}`)
-    
-    if (!actualCount || actualCount === 0) {
-      console.log('No trade data available - skipping refresh')
+      .select('trade_time')
+      .gte('trade_time', processFrom.toISOString())
+      .order('trade_time', { ascending: false })
+      .limit(1)
+      .single()
+
+    if (!maxTradeData) {
+      console.log('No new trades to process')
       
       await supabase
         .from('cron_job_configurations')
         .update({
           last_run_at: new Date().toISOString(),
-          last_status: 'skipped',
-          last_error: 'No trade data available'
+          last_status: 'success',
+          last_error: null
         })
         .eq('id', 'refresh-candles')
 
@@ -47,61 +60,124 @@ Deno.serve(async (req) => {
         JSON.stringify({
           success: true,
           skipped: true,
-          reason: 'no_trade_data',
-          message: 'No trade data available to refresh candles'
+          reason: 'no_new_trades',
+          message: 'No new trades to process'
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       )
     }
 
-    console.log(`Starting candles refresh with ${actualCount} trades...`)
+    // Fetch trades in the time window
+    const { data: trades, error: tradesError } = await supabase
+      .from('trades_normalized')
+      .select('symbol, currency, trade_time, price, quantity')
+      .gte('trade_time', processFrom.toISOString())
+      .order('trade_time', { ascending: true })
 
-    // Call the refresh_candles function
-    const { error } = await supabase.rpc('refresh_candles')
-
-    if (error) {
-      // Check if it's a timeout error
-      const isTimeout = error.message?.includes('statement timeout') || 
-                        error.message?.includes('canceling statement')
-      
-      if (isTimeout) {
-        console.warn(`Refresh timeout after ${Date.now() - startTime}ms - database may be under heavy load or trade volume too high`)
-        
-        await supabase
-          .from('cron_job_configurations')
-          .update({
-            last_run_at: new Date().toISOString(),
-            last_status: 'timeout',
-            last_error: `Query timeout after ${Date.now() - startTime}ms. Trade count: ${actualCount}. Consider reducing data retention or optimizing the query.`
-          })
-          .eq('id', 'refresh-candles')
-
-        return new Response(
-          JSON.stringify({
-            success: false,
-            error_type: 'timeout',
-            duration_ms: Date.now() - startTime,
-            trade_count: actualCount,
-            message: 'Candle refresh timed out - database under heavy load or too much data to process'
-          }),
-          { status: 408, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-        )
-      }
-      
-      throw new Error(`Refresh failed: ${error.message}`)
+    if (tradesError) {
+      throw new Error(`Failed to fetch trades: ${tradesError.message}`)
     }
 
-    const duration = Date.now() - startTime
-    console.log(`Candles refresh complete in ${duration}ms`)
+    console.log(`Fetched ${trades?.length || 0} trades to process`)
 
-    // Get the latest refresh log entry
-    const { data: logEntry } = await supabase
-      .from('mv_refresh_log')
-      .select('rows_count, refresh_duration_ms')
-      .eq('view_name', 'candles_1min')
-      .order('refreshed_at', { ascending: false })
-      .limit(1)
-      .single()
+    if (!trades || trades.length === 0) {
+      await supabase
+        .from('cron_job_configurations')
+        .update({
+          last_run_at: new Date().toISOString(),
+          last_status: 'success',
+          last_error: null
+        })
+        .eq('id', 'refresh-candles')
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: true,
+          reason: 'no_trades_in_window',
+          message: 'No trades found in processing window'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    // Group trades by symbol + currency + minute bucket
+    const candleMap = new Map<string, {
+      symbol: string
+      currency: string
+      bucket: string
+      prices: { price: number, time: string }[]
+      volume: number
+      trade_count: number
+    }>()
+
+    for (const trade of trades) {
+      const bucket = new Date(trade.trade_time)
+      bucket.setSeconds(0, 0)
+      const bucketStr = bucket.toISOString()
+      const currency = trade.currency || 'SEK'
+      const key = `${trade.symbol}|${currency}|${bucketStr}`
+
+      if (!candleMap.has(key)) {
+        candleMap.set(key, {
+          symbol: trade.symbol,
+          currency,
+          bucket: bucketStr,
+          prices: [],
+          volume: 0,
+          trade_count: 0
+        })
+      }
+
+      const candle = candleMap.get(key)!
+      candle.prices.push({ price: Number(trade.price), time: trade.trade_time })
+      candle.volume += Number(trade.quantity)
+      candle.trade_count++
+    }
+
+    // Convert to candles array
+    const candles = Array.from(candleMap.values()).map(c => {
+      const sortedPrices = c.prices.sort((a, b) => a.time.localeCompare(b.time))
+      const prices = sortedPrices.map(p => p.price)
+      return {
+        symbol: c.symbol,
+        currency: c.currency,
+        bucket: c.bucket,
+        open: prices[0],
+        high: Math.max(...prices),
+        low: Math.min(...prices),
+        close: prices[prices.length - 1],
+        volume: c.volume,
+        trade_count: c.trade_count
+      }
+    })
+
+    console.log(`Generated ${candles.length} candles`)
+
+    // Upsert candles in batches
+    const batchSize = 500
+    let upsertedCount = 0
+
+    for (let i = 0; i < candles.length; i += batchSize) {
+      const batch = candles.slice(i, i + batchSize)
+      const { error: upsertError } = await supabase
+        .from('candles_1min')
+        .upsert(batch, { onConflict: 'symbol,currency,bucket' })
+
+      if (upsertError) {
+        console.error(`Upsert batch error: ${upsertError.message}`)
+        throw new Error(`Failed to upsert candles: ${upsertError.message}`)
+      }
+      upsertedCount += batch.length
+    }
+
+    // Log the refresh
+    await supabase.from('mv_refresh_log').insert({
+      view_name: 'candles_1min',
+      refreshed_at: new Date().toISOString(),
+      refresh_duration_ms: Date.now() - startTime,
+      rows_count: upsertedCount
+    })
 
     // Update cron job configuration
     await supabase
@@ -113,13 +189,16 @@ Deno.serve(async (req) => {
       })
       .eq('id', 'refresh-candles')
 
+    const duration = Date.now() - startTime
+    console.log(`Candles refresh complete in ${duration}ms - ${upsertedCount} candles from ${trades.length} trades`)
+
     return new Response(
       JSON.stringify({
         success: true,
         duration_ms: duration,
-        rows_count: logEntry?.rows_count || 0,
-        trade_count: actualCount,
-        message: `Candles refreshed successfully (${logEntry?.rows_count || 0} rows from ${actualCount} trades)`
+        rows_count: upsertedCount,
+        trade_count: trades.length,
+        message: `Candles refreshed successfully (${upsertedCount} candles from ${trades.length} trades)`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
@@ -128,7 +207,6 @@ Deno.serve(async (req) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error(`Candles refresh error: ${errorMessage}`)
 
-    // Update cron job configuration with error
     await supabase
       .from('cron_job_configurations')
       .update({
