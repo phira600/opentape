@@ -232,47 +232,73 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
 
   const handleRunCronJob = async (cronJob: CronJobConfiguration) => {
     setRunningCronId(cronJob.id);
+
     try {
       const { data, error } = await supabase.functions.invoke(cronJob.id);
 
       if (error) throw error;
 
-      // Update last_run_at in the database
-      await supabase
-        .from("cron_job_configurations")
-        .update({ 
-          last_run_at: new Date().toISOString(),
-          last_status: "success"
-        })
-        .eq("id", cronJob.id);
+      // Some backend functions may return 2xx with an explicit failure payload
+      if (data && typeof data === "object" && "success" in data && data.success === false) {
+        const message =
+          typeof (data as any).message === "string" ? (data as any).message : "Job failed";
+        throw new Error(message);
+      }
 
+      // Backend functions are responsible for persisting their own run status.
       toast({
         title: "Job complete",
-        description: data.deleted_count !== undefined
-          ? `Cleaned up ${data.deleted_count} old records`
-          : data.count !== undefined
-          ? `Synced ${data.count} symbols`
-          : "Job completed successfully",
+        description:
+          (data as any)?.deleted_count !== undefined
+            ? `Cleaned up ${(data as any).deleted_count} old records`
+            : (data as any)?.count !== undefined
+              ? `Synced ${(data as any).count} symbols`
+              : (data as any)?.message
+                ? String((data as any).message)
+                : "Job completed successfully",
       });
+
       fetchCronJobs();
-    } catch (error) {
-      await supabase
-        .from("cron_job_configurations")
-        .update({ 
-          last_run_at: new Date().toISOString(),
-          last_status: "error",
-          last_error: error instanceof Error ? error.message : "Unknown error"
-        })
-        .eq("id", cronJob.id);
+    } catch (err) {
+      // supabase-js provides status/details for non-2xx function responses under `context`
+      const status = (err as any)?.context?.status as number | undefined;
+      const body = (err as any)?.context?.body;
+      const backendMessage =
+        typeof body === "string"
+          ? (() => {
+              try {
+                return JSON.parse(body)?.message;
+              } catch {
+                return undefined;
+              }
+            })()
+          : body?.message;
+
+      // If the backend returned a response (e.g. 408 timeout), do NOT overwrite the
+      // backend-managed cron status with a generic "error".
+      if (!status) {
+        await supabase
+          .from("cron_job_configurations")
+          .update({
+            last_run_at: new Date().toISOString(),
+            last_status: "error",
+            last_error: err instanceof Error ? err.message : "Unknown error",
+          })
+          .eq("id", cronJob.id);
+      }
 
       toast({
-        title: "Job failed",
-        description: error instanceof Error ? error.message : "Unknown error",
+        title: status === 408 ? "Job timed out" : "Job failed",
+        description:
+          backendMessage ||
+          (err instanceof Error ? err.message : status ? `Request failed (${status})` : "Unknown error"),
         variant: "destructive",
       });
+
       fetchCronJobs();
+    } finally {
+      setRunningCronId(null);
     }
-    setRunningCronId(null);
   };
 
   const parseCronSchedule = (schedule: string): string => {
@@ -327,6 +353,15 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
             Success
           </Badge>
         );
+      case "timeout":
+        return (
+          <Badge variant="secondary">
+            <AlertCircle className="h-3 w-3 mr-1" />
+            Timeout
+          </Badge>
+        );
+      case "skipped":
+        return <Badge variant="outline">Skipped</Badge>;
       case "error":
         return (
           <Badge variant="destructive">
