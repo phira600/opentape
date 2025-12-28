@@ -12,29 +12,82 @@ Deno.serve(async (req) => {
 
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-  
-  // Create client with extended timeout for long-running queries
-  const supabase = createClient(supabaseUrl, supabaseServiceKey, {
-    db: {
-      schema: 'public',
-    },
-    global: {
-      headers: {
-        // Set statement timeout to 60 seconds
-        'x-supabase-postgres-config': 'statement_timeout=60000'
-      }
-    }
-  })
+  const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   const startTime = Date.now()
 
   try {
-    console.log('Starting candles refresh...')
+    // First check if we have trade data to process
+    const { data: tradeStats, error: statsError } = await supabase
+      .from('trades_normalized')
+      .select('id', { count: 'exact', head: true })
+    
+    const tradeCount = tradeStats ? (statsError ? 0 : (await supabase.from('trades_normalized').select('*', { count: 'exact', head: true })).count || 0) : 0
+    
+    // Get actual count
+    const { count: actualCount } = await supabase
+      .from('trades_normalized')
+      .select('*', { count: 'exact', head: true })
+    
+    console.log(`Trade count in database: ${actualCount || 0}`)
+    
+    if (!actualCount || actualCount === 0) {
+      console.log('No trade data available - skipping refresh')
+      
+      await supabase
+        .from('cron_job_configurations')
+        .update({
+          last_run_at: new Date().toISOString(),
+          last_status: 'skipped',
+          last_error: 'No trade data available'
+        })
+        .eq('id', 'refresh-candles')
+
+      return new Response(
+        JSON.stringify({
+          success: true,
+          skipped: true,
+          reason: 'no_trade_data',
+          message: 'No trade data available to refresh candles'
+        }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    console.log(`Starting candles refresh with ${actualCount} trades...`)
 
     // Call the refresh_candles function
     const { error } = await supabase.rpc('refresh_candles')
 
     if (error) {
+      // Check if it's a timeout error
+      const isTimeout = error.message?.includes('statement timeout') || 
+                        error.message?.includes('canceling statement')
+      
+      if (isTimeout) {
+        console.warn(`Refresh timeout after ${Date.now() - startTime}ms - database may be under heavy load or trade volume too high`)
+        
+        await supabase
+          .from('cron_job_configurations')
+          .update({
+            last_run_at: new Date().toISOString(),
+            last_status: 'timeout',
+            last_error: `Query timeout after ${Date.now() - startTime}ms. Trade count: ${actualCount}. Consider reducing data retention or optimizing the query.`
+          })
+          .eq('id', 'refresh-candles')
+
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error_type: 'timeout',
+            duration_ms: Date.now() - startTime,
+            trade_count: actualCount,
+            message: 'Candle refresh timed out - database under heavy load or too much data to process'
+          }),
+          { status: 408, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+      
       throw new Error(`Refresh failed: ${error.message}`)
     }
 
@@ -65,7 +118,8 @@ Deno.serve(async (req) => {
         success: true,
         duration_ms: duration,
         rows_count: logEntry?.rows_count || 0,
-        message: `Candles refreshed successfully (${logEntry?.rows_count || 0} rows)`
+        trade_count: actualCount,
+        message: `Candles refreshed successfully (${logEntry?.rows_count || 0} rows from ${actualCount} trades)`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
