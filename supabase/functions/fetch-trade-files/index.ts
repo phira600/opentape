@@ -267,14 +267,25 @@ Deno.serve(async (req) => {
 
     // Refresh candles in background - don't await to avoid timeout
     console.log('Starting candles refresh in background...')
-    Promise.resolve(supabase.rpc('refresh_candles'))
-      .then((result) => {
-        if (result.error) {
-          console.error('Candles refresh error:', result.error.message)
-        } else {
-          console.log('Candles refresh completed successfully')
-        }
-      })
+    // Trigger incremental candle refresh via edge function (not DB function which can timeout)
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+    fetch(`${supabaseUrl}/functions/v1/refresh-candles`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${supabaseServiceKey}`,
+        'Content-Type': 'application/json'
+      }
+    }).then(async (res) => {
+      const result = await res.json()
+      if (result.success) {
+        console.log(`Candles refresh completed: ${result.rows_count} candles from ${result.trade_count} trades`)
+      } else {
+        console.error('Candles refresh error:', result.error)
+      }
+    }).catch(err => {
+      console.error('Candles refresh call failed:', err)
+    })
 
     return new Response(
       JSON.stringify({ success: true, results }),
