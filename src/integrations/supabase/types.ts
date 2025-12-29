@@ -525,6 +525,11 @@ export type Database = {
         Returns: boolean
       }
       refresh_candles: { Args: never; Returns: undefined }
+      schedule_cron_job: {
+        Args: { job_command: string; job_name: string; job_schedule: string }
+        Returns: undefined
+      }
+      unschedule_cron_job: { Args: { job_name: string }; Returns: undefined }
     }
     Enums: {
       app_role: "admin" | "moderator" | "user"

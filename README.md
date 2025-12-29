@@ -2,25 +2,42 @@
 
 Real-time trade data aggregation and API platform.
 
-## Initial Admin Setup
+## Quick Start (New Installation)
 
-This application uses invite-only authentication. To create the first admin user:
-
-### Option 1: Automatic Setup (Recommended)
-
-Call the provisioning endpoint once after deployment:
+After deploying to Supabase, run these commands to set up the system:
 
 ```bash
-curl -X POST https://skexlbkhxhoeyghquvux.supabase.co/functions/v1/provision-default-admin
+# 1. Create the first admin user
+curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-admin
+
+# 2. Set up default data sources (CBOE, Nasdaq Nordic)
+curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-jobs
+
+# 3. Set up cron jobs for scheduled tasks
+curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-cron-jobs
 ```
 
-This creates a default admin user:
+Replace `YOUR_PROJECT_ID` with your Supabase project ID.
+
+### Default Admin Credentials
 - **Email:** `admin@opentape.local`
 - **Password:** `admin123!`
 
 ⚠️ **Change the password immediately after first login!**
 
-### Option 2: Manual Setup
+### What Gets Set Up
+
+**Data Sources** (via `provision-default-jobs`):
+- CBOE BXE, CXE, DXE trade feeds
+- Nasdaq Nordic trade feed
+
+**Cron Jobs** (via `provision-cron-jobs`):
+- `fetch-trade-files-weekdays`: Fetches trades every minute on weekdays
+- `cleanup-old-trades-daily`: Cleans up old data daily at midnight
+- `refresh-candles-5min`: Refreshes price candles every 5 minutes
+- `cboe-sis-symbology-daily`: Updates symbol data at 8 AM UTC on weekdays
+
+### Manual Admin Setup (Alternative)
 
 1. Create a user account in the backend authentication system
 2. Assign admin role by running this SQL:
