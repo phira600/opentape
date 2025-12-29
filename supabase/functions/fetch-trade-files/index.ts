@@ -275,7 +275,8 @@ Deno.serve(async (req) => {
       headers: {
         'Authorization': `Bearer ${supabaseServiceKey}`,
         'Content-Type': 'application/json'
-      }
+      },
+      body: JSON.stringify({ update_status: false }) // Don't update cron status for background calls
     }).then(async (res) => {
       const result = await res.json()
       if (result.success) {

@@ -16,6 +16,15 @@ Deno.serve(async (req) => {
 
   const startTime = Date.now()
 
+  // Check if this is a cron-triggered run (update status) or background call (skip status update)
+  let body: { update_status?: boolean } = { update_status: true }
+  try {
+    body = await req.json()
+  } catch {
+    // No body or invalid JSON - default to updating status
+  }
+  const updateCronStatus = body.update_status !== false
+
   try {
     // Get last refresh time from mv_refresh_log
     const { data: lastRefresh } = await supabase
@@ -47,14 +56,16 @@ Deno.serve(async (req) => {
     if (!maxTradeData) {
       console.log('No new trades to process')
       
-      await supabase
-        .from('cron_job_configurations')
-        .update({
-          last_run_at: new Date().toISOString(),
-          last_status: 'success',
-          last_error: null
-        })
-        .eq('id', 'refresh-candles')
+      if (updateCronStatus) {
+        await supabase
+          .from('cron_job_configurations')
+          .update({
+            last_run_at: new Date().toISOString(),
+            last_status: 'success',
+            last_error: null
+          })
+          .eq('id', 'refresh-candles')
+      }
 
       return new Response(
         JSON.stringify({
@@ -81,14 +92,16 @@ Deno.serve(async (req) => {
     console.log(`Fetched ${trades?.length || 0} trades to process`)
 
     if (!trades || trades.length === 0) {
-      await supabase
-        .from('cron_job_configurations')
-        .update({
-          last_run_at: new Date().toISOString(),
-          last_status: 'success',
-          last_error: null
-        })
-        .eq('id', 'refresh-candles')
+      if (updateCronStatus) {
+        await supabase
+          .from('cron_job_configurations')
+          .update({
+            last_run_at: new Date().toISOString(),
+            last_status: 'success',
+            last_error: null
+          })
+          .eq('id', 'refresh-candles')
+      }
 
       return new Response(
         JSON.stringify({
@@ -179,15 +192,17 @@ Deno.serve(async (req) => {
       rows_count: upsertedCount
     })
 
-    // Update cron job configuration
-    await supabase
-      .from('cron_job_configurations')
-      .update({
-        last_run_at: new Date().toISOString(),
-        last_status: 'success',
-        last_error: null
-      })
-      .eq('id', 'refresh-candles')
+    // Update cron job configuration only if triggered as cron job
+    if (updateCronStatus) {
+      await supabase
+        .from('cron_job_configurations')
+        .update({
+          last_run_at: new Date().toISOString(),
+          last_status: 'success',
+          last_error: null
+        })
+        .eq('id', 'refresh-candles')
+    }
 
     const duration = Date.now() - startTime
     console.log(`Candles refresh complete in ${duration}ms - ${upsertedCount} candles from ${trades.length} trades`)
@@ -207,14 +222,16 @@ Deno.serve(async (req) => {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error(`Candles refresh error: ${errorMessage}`)
 
-    await supabase
-      .from('cron_job_configurations')
-      .update({
-        last_run_at: new Date().toISOString(),
-        last_status: 'error',
-        last_error: errorMessage
-      })
-      .eq('id', 'refresh-candles')
+    if (updateCronStatus) {
+      await supabase
+        .from('cron_job_configurations')
+        .update({
+          last_run_at: new Date().toISOString(),
+          last_status: 'error',
+          last_error: errorMessage
+        })
+        .eq('id', 'refresh-candles')
+    }
 
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
