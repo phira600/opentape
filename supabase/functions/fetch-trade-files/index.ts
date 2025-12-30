@@ -266,7 +266,7 @@ Deno.serve(async (req) => {
     }
 
     // Refresh candles in background - don't await to avoid timeout
-    console.log('Starting candles refresh in background...')
+    console.log('Starting incremental candles refresh in background...')
     // Trigger incremental candle refresh via edge function (not DB function which can timeout)
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
@@ -276,11 +276,11 @@ Deno.serve(async (req) => {
         'Authorization': `Bearer ${supabaseServiceKey}`,
         'Content-Type': 'application/json'
       },
-      body: JSON.stringify({ update_status: false }) // Don't update cron status for background calls
+      body: JSON.stringify({ incremental: true }) // Incremental mode for recent trades only
     }).then(async (res) => {
       const result = await res.json()
       if (result.success) {
-        console.log(`Candles refresh completed: ${result.rows_count} candles from ${result.trade_count} trades`)
+        console.log(`Incremental candles refresh completed: ${result.rows_count} candles from ${result.trade_count} trades`)
       } else {
         console.error('Candles refresh error:', result.error)
       }
