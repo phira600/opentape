@@ -8,6 +8,8 @@ const corsHeaders = {
 interface RefreshRequest {
   update_status?: boolean
   days_back?: number  // Number of days back from yesterday to refresh (default: 7)
+  from_date?: string  // ISO date string for start of range
+  to_date?: string    // ISO date string for end of range
   incremental?: boolean  // If true, do incremental refresh for recent trades only
 }
 
@@ -58,9 +60,10 @@ Deno.serve(async (req) => {
       // INCREMENTAL MODE: Process recent trades (used after file downloads)
       return await processIncremental(supabase, startTime)
     } else {
-      // HISTORICAL MODE: Recreate candles for date range (used by cron job)
+      // HISTORICAL MODE: Recreate candles for date range (used by cron job or manual)
+      // If from_date/to_date provided, use them; otherwise calculate from days_back
       const daysBack = body.days_back ?? 7  // Default: 7 days
-      return await processHistorical(supabase, startTime, daysBack, updateCronStatus)
+      return await processHistorical(supabase, startTime, daysBack, updateCronStatus, body.from_date, body.to_date)
     }
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
@@ -126,18 +129,35 @@ async function processIncremental(supabase: any, startTime: number) {
   )
 }
 
-// Process historical refresh for a date range (T-daysBack to T-1)
-async function processHistorical(supabase: any, startTime: number, daysBack: number, updateCronStatus: boolean) {
-  const now = new Date()
-  
-  // Calculate date range: T-daysBack to T-1 (yesterday end of day)
-  const endDate = new Date(now)
-  endDate.setUTCHours(0, 0, 0, 0)  // Start of today = end of yesterday
-  
-  const startDate = new Date(endDate)
-  startDate.setUTCDate(startDate.getUTCDate() - daysBack)  // Go back daysBack days
+// Process historical refresh for a date range
+async function processHistorical(
+  supabase: any, 
+  startTime: number, 
+  daysBack: number, 
+  updateCronStatus: boolean,
+  fromDateStr?: string,
+  toDateStr?: string
+) {
+  let startDate: Date
+  let endDate: Date
 
-  console.log(`[Historical] Refreshing candles from ${startDate.toISOString()} to ${endDate.toISOString()} (${daysBack} days)`)
+  if (fromDateStr && toDateStr) {
+    // Use provided date range
+    startDate = new Date(fromDateStr)
+    startDate.setUTCHours(0, 0, 0, 0)
+    endDate = new Date(toDateStr)
+    endDate.setUTCHours(23, 59, 59, 999)  // End of the to_date day
+    console.log(`[Historical] Using provided date range: ${startDate.toISOString()} to ${endDate.toISOString()}`)
+  } else {
+    // Calculate date range: T-daysBack to T-1 (yesterday end of day)
+    const now = new Date()
+    endDate = new Date(now)
+    endDate.setUTCHours(0, 0, 0, 0)  // Start of today = end of yesterday
+    
+    startDate = new Date(endDate)
+    startDate.setUTCDate(startDate.getUTCDate() - daysBack)  // Go back daysBack days
+    console.log(`[Historical] Refreshing candles from ${startDate.toISOString()} to ${endDate.toISOString()} (${daysBack} days)`)
+  }
 
   // Delete existing candles in this range first
   const { error: deleteError } = await supabase
