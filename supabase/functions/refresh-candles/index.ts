@@ -17,13 +17,35 @@ Deno.serve(async (req) => {
   const startTime = Date.now()
 
   // Check if this is a cron-triggered run (update status) or background call (skip status update)
-  let body: { update_status?: boolean } = { update_status: true }
+  let body: { update_status?: boolean } = {}
   try {
     body = await req.json()
   } catch {
-    // No body or invalid JSON - default to updating status
+    // No body or invalid JSON - default behavior
   }
-  const updateCronStatus = body.update_status !== false
+  
+  // Only update cron status if explicitly requested (update_status: true)
+  // Background calls from fetch-trade-files pass update_status: false
+  // pg_cron calls pass empty body {}, which should also NOT update status
+  // Status should only be updated when manually triggered or when update_status is explicitly true
+  const updateCronStatus = body.update_status === true
+  
+  // If this is a cron-triggered run (empty body from pg_cron), check if job is enabled
+  if (Object.keys(body).length === 0) {
+    const { data: cronConfig } = await supabase
+      .from('cron_job_configurations')
+      .select('is_enabled')
+      .eq('id', 'refresh-candles')
+      .single()
+    
+    if (cronConfig && !cronConfig.is_enabled) {
+      console.log('Refresh candles cron job is disabled, skipping')
+      return new Response(
+        JSON.stringify({ success: true, skipped: true, reason: 'cron_disabled' }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+  }
 
   try {
     // Get last refresh time from mv_refresh_log

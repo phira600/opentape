@@ -69,12 +69,16 @@ Deno.serve(async (req) => {
         }
 
         // Build the HTTP POST command for pg_cron
+        // Include update_status: true so the function knows this is a cron-triggered run
         const functionUrl = `${supabaseUrl}/functions/v1/${job.function_name}`
+        const bodyJson = job.function_name === 'refresh-candles' 
+          ? '{"update_status": true}' 
+          : '{}'
         const cronCommand = `
           SELECT net.http_post(
             url := '${functionUrl}',
             headers := '{"Content-Type": "application/json", "Authorization": "Bearer ${supabaseAnonKey}"}'::jsonb,
-            body := '{}'::jsonb
+            body := '${bodyJson}'::jsonb
           ) AS request_id;
         `
 

@@ -111,7 +111,28 @@ export function StatsCards() {
 
     // Refresh stats every 30 seconds
     const interval = setInterval(fetchStats, 30000);
-    return () => clearInterval(interval);
+    
+    // Subscribe to realtime updates for mv_refresh_log
+    const channel = supabase
+      .channel('mv-refresh-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'INSERT',
+          schema: 'public',
+          table: 'mv_refresh_log',
+        },
+        () => {
+          // Refetch stats when a new refresh log entry is added
+          fetchStats();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      clearInterval(interval);
+      supabase.removeChannel(channel);
+    };
   }, []);
 
   const formatNumber = (num: number) => {
