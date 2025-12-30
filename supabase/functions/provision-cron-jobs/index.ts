@@ -26,10 +26,10 @@ const CRON_JOBS: CronJobDefinition[] = [
     description: 'Cleans up old trades based on retention settings'
   },
   {
-    name: 'refresh-candles-5min',
-    schedule: '*/5 * * * *', // Every 5 minutes
+    name: 'refresh-candles-daily',
+    schedule: '0 1 * * *', // Daily at 1 AM UTC
     function_name: 'refresh-candles',
-    description: 'Refreshes 1-minute candle aggregations'
+    description: 'Recreates candles for historical trade data (T-7 to T-1)'
   },
   {
     name: 'cboe-sis-symbology-daily',
@@ -69,11 +69,13 @@ Deno.serve(async (req) => {
         }
 
         // Build the HTTP POST command for pg_cron
-        // Include update_status: true so the function knows this is a cron-triggered run
+        // Include appropriate body for each function type
         const functionUrl = `${supabaseUrl}/functions/v1/${job.function_name}`
-        const bodyJson = job.function_name === 'refresh-candles' 
-          ? '{"update_status": true}' 
-          : '{}'
+        let bodyJson = '{}'
+        if (job.function_name === 'refresh-candles') {
+          // Historical mode: recreate candles for T-7 to T-1
+          bodyJson = '{"update_status": true, "days_back": 7}'
+        }
         const cronCommand = `
           SELECT net.http_post(
             url := '${functionUrl}',

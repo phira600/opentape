@@ -5,6 +5,12 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+interface RefreshRequest {
+  update_status?: boolean
+  days_back?: number  // Number of days back from yesterday to refresh (default: 7)
+  incremental?: boolean  // If true, do incremental refresh for recent trades only
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -16,22 +22,19 @@ Deno.serve(async (req) => {
 
   const startTime = Date.now()
 
-  // Check if this is a cron-triggered run (update status) or background call (skip status update)
-  let body: { update_status?: boolean } = {}
+  // Parse request body
+  let body: RefreshRequest = {}
   try {
     body = await req.json()
   } catch {
     // No body or invalid JSON - default behavior
   }
   
-  // Only update cron status if explicitly requested (update_status: true)
-  // Background calls from fetch-trade-files pass update_status: false
-  // pg_cron calls pass empty body {}, which should also NOT update status
-  // Status should only be updated when manually triggered or when update_status is explicitly true
+  // Only update cron status if explicitly requested
   const updateCronStatus = body.update_status === true
   
-  // If this is a cron-triggered run (empty body from pg_cron), check if job is enabled
-  if (Object.keys(body).length === 0) {
+  // If this is a cron-triggered run, check if job is enabled
+  if (updateCronStatus) {
     const { data: cronConfig } = await supabase
       .from('cron_job_configurations')
       .select('is_enabled')
@@ -47,199 +50,18 @@ Deno.serve(async (req) => {
     }
   }
 
+  // Determine mode: incremental (for background calls) or historical (for cron/manual)
+  const isIncremental = body.incremental === true
+  
   try {
-    // Get last refresh time from mv_refresh_log
-    const { data: lastRefresh } = await supabase
-      .from('mv_refresh_log')
-      .select('refreshed_at')
-      .eq('view_name', 'candles_1min')
-      .order('refreshed_at', { ascending: false })
-      .limit(1)
-      .single()
-
-    // Determine the time range to process
-    // Use 5-minute lookback for backdated trades, or last 30 minutes for first run
-    const lookbackMinutes = lastRefresh ? 5 : 30
-    const processFrom = lastRefresh 
-      ? new Date(new Date(lastRefresh.refreshed_at).getTime() - lookbackMinutes * 60 * 1000)
-      : new Date(Date.now() - 30 * 60 * 1000)
-
-    console.log(`Processing trades from ${processFrom.toISOString()} (lookback: ${lookbackMinutes} min)`)
-
-    // Get max trade time to know our processing window
-    const { data: maxTradeData } = await supabase
-      .from('trades_normalized')
-      .select('trade_time')
-      .gte('trade_time', processFrom.toISOString())
-      .order('trade_time', { ascending: false })
-      .limit(1)
-      .single()
-
-    if (!maxTradeData) {
-      console.log('No new trades to process')
-      
-      if (updateCronStatus) {
-        await supabase
-          .from('cron_job_configurations')
-          .update({
-            last_run_at: new Date().toISOString(),
-            last_status: 'success',
-            last_error: null
-          })
-          .eq('id', 'refresh-candles')
-      }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          skipped: true,
-          reason: 'no_new_trades',
-          message: 'No new trades to process'
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+    if (isIncremental) {
+      // INCREMENTAL MODE: Process recent trades (used after file downloads)
+      return await processIncremental(supabase, startTime)
+    } else {
+      // HISTORICAL MODE: Recreate candles for date range (used by cron job)
+      const daysBack = body.days_back ?? 7  // Default: 7 days
+      return await processHistorical(supabase, startTime, daysBack, updateCronStatus)
     }
-
-    // Fetch trades in the time window
-    const { data: trades, error: tradesError } = await supabase
-      .from('trades_normalized')
-      .select('symbol, currency, trade_time, price, quantity')
-      .gte('trade_time', processFrom.toISOString())
-      .order('trade_time', { ascending: true })
-
-    if (tradesError) {
-      throw new Error(`Failed to fetch trades: ${tradesError.message}`)
-    }
-
-    console.log(`Fetched ${trades?.length || 0} trades to process`)
-
-    if (!trades || trades.length === 0) {
-      if (updateCronStatus) {
-        await supabase
-          .from('cron_job_configurations')
-          .update({
-            last_run_at: new Date().toISOString(),
-            last_status: 'success',
-            last_error: null
-          })
-          .eq('id', 'refresh-candles')
-      }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          skipped: true,
-          reason: 'no_trades_in_window',
-          message: 'No trades found in processing window'
-        }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
-    }
-
-    // Group trades by symbol + currency + minute bucket
-    const candleMap = new Map<string, {
-      symbol: string
-      currency: string
-      bucket: string
-      prices: { price: number, time: string }[]
-      volume: number
-      trade_count: number
-    }>()
-
-    for (const trade of trades) {
-      const bucket = new Date(trade.trade_time)
-      bucket.setSeconds(0, 0)
-      const bucketStr = bucket.toISOString()
-      const currency = trade.currency || 'SEK'
-      const key = `${trade.symbol}|${currency}|${bucketStr}`
-
-      if (!candleMap.has(key)) {
-        candleMap.set(key, {
-          symbol: trade.symbol,
-          currency,
-          bucket: bucketStr,
-          prices: [],
-          volume: 0,
-          trade_count: 0
-        })
-      }
-
-      const candle = candleMap.get(key)!
-      candle.prices.push({ price: Number(trade.price), time: trade.trade_time })
-      candle.volume += Number(trade.quantity)
-      candle.trade_count++
-    }
-
-    // Convert to candles array
-    const candles = Array.from(candleMap.values()).map(c => {
-      const sortedPrices = c.prices.sort((a, b) => a.time.localeCompare(b.time))
-      const prices = sortedPrices.map(p => p.price)
-      return {
-        symbol: c.symbol,
-        currency: c.currency,
-        bucket: c.bucket,
-        open: prices[0],
-        high: Math.max(...prices),
-        low: Math.min(...prices),
-        close: prices[prices.length - 1],
-        volume: c.volume,
-        trade_count: c.trade_count
-      }
-    })
-
-    console.log(`Generated ${candles.length} candles`)
-
-    // Upsert candles in batches
-    const batchSize = 500
-    let upsertedCount = 0
-
-    for (let i = 0; i < candles.length; i += batchSize) {
-      const batch = candles.slice(i, i + batchSize)
-      const { error: upsertError } = await supabase
-        .from('candles_1min')
-        .upsert(batch, { onConflict: 'symbol,currency,bucket' })
-
-      if (upsertError) {
-        console.error(`Upsert batch error: ${upsertError.message}`)
-        throw new Error(`Failed to upsert candles: ${upsertError.message}`)
-      }
-      upsertedCount += batch.length
-    }
-
-    // Log the refresh
-    await supabase.from('mv_refresh_log').insert({
-      view_name: 'candles_1min',
-      refreshed_at: new Date().toISOString(),
-      refresh_duration_ms: Date.now() - startTime,
-      rows_count: upsertedCount
-    })
-
-    // Update cron job configuration only if triggered as cron job
-    if (updateCronStatus) {
-      await supabase
-        .from('cron_job_configurations')
-        .update({
-          last_run_at: new Date().toISOString(),
-          last_status: 'success',
-          last_error: null
-        })
-        .eq('id', 'refresh-candles')
-    }
-
-    const duration = Date.now() - startTime
-    console.log(`Candles refresh complete in ${duration}ms - ${upsertedCount} candles from ${trades.length} trades`)
-
-    return new Response(
-      JSON.stringify({
-        success: true,
-        duration_ms: duration,
-        rows_count: upsertedCount,
-        trade_count: trades.length,
-        message: `Candles refreshed successfully (${upsertedCount} candles from ${trades.length} trades)`
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
-
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error(`Candles refresh error: ${errorMessage}`)
@@ -261,3 +83,259 @@ Deno.serve(async (req) => {
     )
   }
 })
+
+// Process incremental refresh for recent trades (after file downloads)
+async function processIncremental(supabase: any, startTime: number) {
+  // Get last refresh time from mv_refresh_log
+  const { data: lastRefresh } = await supabase
+    .from('mv_refresh_log')
+    .select('refreshed_at')
+    .eq('view_name', 'candles_1min')
+    .order('refreshed_at', { ascending: false })
+    .limit(1)
+    .single()
+
+  // Use 5-minute lookback for backdated trades, or last 30 minutes for first run
+  const lookbackMinutes = lastRefresh ? 5 : 30
+  const processFrom = lastRefresh 
+    ? new Date(new Date(lastRefresh.refreshed_at).getTime() - lookbackMinutes * 60 * 1000)
+    : new Date(Date.now() - 30 * 60 * 1000)
+
+  console.log(`[Incremental] Processing trades from ${processFrom.toISOString()} (lookback: ${lookbackMinutes} min)`)
+
+  const result = await processTradesInRange(supabase, processFrom, new Date(), startTime)
+  
+  // Log the refresh
+  await supabase.from('mv_refresh_log').insert({
+    view_name: 'candles_1min',
+    refreshed_at: new Date().toISOString(),
+    refresh_duration_ms: Date.now() - startTime,
+    rows_count: result.candleCount
+  })
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      mode: 'incremental',
+      duration_ms: Date.now() - startTime,
+      rows_count: result.candleCount,
+      trade_count: result.tradeCount,
+      message: `Incremental refresh: ${result.candleCount} candles from ${result.tradeCount} trades`
+    }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  )
+}
+
+// Process historical refresh for a date range (T-daysBack to T-1)
+async function processHistorical(supabase: any, startTime: number, daysBack: number, updateCronStatus: boolean) {
+  const now = new Date()
+  
+  // Calculate date range: T-daysBack to T-1 (yesterday end of day)
+  const endDate = new Date(now)
+  endDate.setUTCHours(0, 0, 0, 0)  // Start of today = end of yesterday
+  
+  const startDate = new Date(endDate)
+  startDate.setUTCDate(startDate.getUTCDate() - daysBack)  // Go back daysBack days
+
+  console.log(`[Historical] Refreshing candles from ${startDate.toISOString()} to ${endDate.toISOString()} (${daysBack} days)`)
+
+  // Delete existing candles in this range first
+  const { error: deleteError } = await supabase
+    .from('candles_1min')
+    .delete()
+    .gte('bucket', startDate.toISOString())
+    .lt('bucket', endDate.toISOString())
+
+  if (deleteError) {
+    console.error(`Failed to delete existing candles: ${deleteError.message}`)
+    throw new Error(`Failed to delete existing candles: ${deleteError.message}`)
+  }
+
+  console.log(`Deleted existing candles in range`)
+
+  // Process the range
+  const result = await processTradesInRange(supabase, startDate, endDate, startTime)
+
+  // Update daily_stats for affected dates
+  await updateDailyStats(supabase, startDate, endDate)
+
+  const duration = Date.now() - startTime
+
+  // Log the refresh
+  await supabase.from('mv_refresh_log').insert({
+    view_name: 'candles_1min',
+    refreshed_at: new Date().toISOString(),
+    refresh_duration_ms: duration,
+    rows_count: result.candleCount
+  })
+
+  // Update cron job status if requested
+  if (updateCronStatus) {
+    await supabase
+      .from('cron_job_configurations')
+      .update({
+        last_run_at: new Date().toISOString(),
+        last_status: 'success',
+        last_error: null
+      })
+      .eq('id', 'refresh-candles')
+  }
+
+  console.log(`[Historical] Complete in ${duration}ms - ${result.candleCount} candles from ${result.tradeCount} trades`)
+
+  return new Response(
+    JSON.stringify({
+      success: true,
+      mode: 'historical',
+      days_back: daysBack,
+      start_date: startDate.toISOString(),
+      end_date: endDate.toISOString(),
+      duration_ms: duration,
+      rows_count: result.candleCount,
+      trade_count: result.tradeCount,
+      message: `Historical refresh (${daysBack} days): ${result.candleCount} candles from ${result.tradeCount} trades`
+    }),
+    { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+  )
+}
+
+// Process trades in a given time range and create candles
+async function processTradesInRange(supabase: any, fromDate: Date, toDate: Date, startTime: number) {
+  // Fetch trades in the time window
+  const { data: trades, error: tradesError } = await supabase
+    .from('trades_normalized')
+    .select('symbol, currency, trade_time, price, quantity')
+    .gte('trade_time', fromDate.toISOString())
+    .lt('trade_time', toDate.toISOString())
+    .order('trade_time', { ascending: true })
+
+  if (tradesError) {
+    throw new Error(`Failed to fetch trades: ${tradesError.message}`)
+  }
+
+  console.log(`Fetched ${trades?.length || 0} trades to process`)
+
+  if (!trades || trades.length === 0) {
+    return { candleCount: 0, tradeCount: 0 }
+  }
+
+  // Group trades by symbol + currency + minute bucket
+  const candleMap = new Map<string, {
+    symbol: string
+    currency: string
+    bucket: string
+    prices: { price: number, time: string }[]
+    volume: number
+    trade_count: number
+  }>()
+
+  for (const trade of trades) {
+    const bucket = new Date(trade.trade_time)
+    bucket.setSeconds(0, 0)
+    const bucketStr = bucket.toISOString()
+    const currency = trade.currency || 'SEK'
+    const key = `${trade.symbol}|${currency}|${bucketStr}`
+
+    if (!candleMap.has(key)) {
+      candleMap.set(key, {
+        symbol: trade.symbol,
+        currency,
+        bucket: bucketStr,
+        prices: [],
+        volume: 0,
+        trade_count: 0
+      })
+    }
+
+    const candle = candleMap.get(key)!
+    candle.prices.push({ price: Number(trade.price), time: trade.trade_time })
+    candle.volume += Number(trade.quantity)
+    candle.trade_count++
+  }
+
+  // Convert to candles array
+  const candles = Array.from(candleMap.values()).map(c => {
+    const sortedPrices = c.prices.sort((a, b) => a.time.localeCompare(b.time))
+    const prices = sortedPrices.map(p => p.price)
+    return {
+      symbol: c.symbol,
+      currency: c.currency,
+      bucket: c.bucket,
+      open: prices[0],
+      high: Math.max(...prices),
+      low: Math.min(...prices),
+      close: prices[prices.length - 1],
+      volume: c.volume,
+      trade_count: c.trade_count
+    }
+  })
+
+  console.log(`Generated ${candles.length} candles`)
+
+  // Upsert candles in batches
+  const batchSize = 500
+  let upsertedCount = 0
+
+  for (let i = 0; i < candles.length; i += batchSize) {
+    const batch = candles.slice(i, i + batchSize)
+    const { error: upsertError } = await supabase
+      .from('candles_1min')
+      .upsert(batch, { onConflict: 'symbol,currency,bucket' })
+
+    if (upsertError) {
+      console.error(`Upsert batch error: ${upsertError.message}`)
+      throw new Error(`Failed to upsert candles: ${upsertError.message}`)
+    }
+    upsertedCount += batch.length
+  }
+
+  return { candleCount: upsertedCount, tradeCount: trades.length }
+}
+
+// Update daily_stats for affected dates
+async function updateDailyStats(supabase: any, startDate: Date, endDate: Date) {
+  // Get unique dates in the range
+  const dates: string[] = []
+  const current = new Date(startDate)
+  while (current < endDate) {
+    dates.push(current.toISOString().split('T')[0])
+    current.setUTCDate(current.getUTCDate() + 1)
+  }
+
+  for (const date of dates) {
+    const dayStart = new Date(date + 'T00:00:00Z')
+    const dayEnd = new Date(dayStart)
+    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1)
+
+    // Count trades for this day
+    const { count: tradeCount } = await supabase
+      .from('trades_normalized')
+      .select('*', { count: 'exact', head: true })
+      .gte('trade_time', dayStart.toISOString())
+      .lt('trade_time', dayEnd.toISOString())
+
+    // Get unique symbols and venues (limited sample)
+    const { data: sampleData } = await supabase
+      .from('trades_normalized')
+      .select('symbol, venue')
+      .gte('trade_time', dayStart.toISOString())
+      .lt('trade_time', dayEnd.toISOString())
+      .limit(10000)
+
+    const uniqueSymbols = new Set(sampleData?.map((t: any) => t.symbol) || [])
+    const uniqueVenues = new Set(sampleData?.map((t: any) => t.venue) || [])
+
+    // Upsert daily stats
+    await supabase
+      .from('daily_stats')
+      .upsert({
+        date,
+        total_trades: tradeCount || 0,
+        unique_symbols: uniqueSymbols.size,
+        unique_venues: uniqueVenues.size,
+        last_updated: new Date().toISOString()
+      }, { onConflict: 'date' })
+  }
+
+  console.log(`Updated daily_stats for ${dates.length} days`)
+}
