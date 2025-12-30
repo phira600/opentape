@@ -6,7 +6,9 @@ import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Calendar as CalendarComponent } from "@/components/ui/calendar";
 import { useToast } from "@/hooks/use-toast";
+import { cn } from "@/lib/utils";
 import {
   Table,
   TableBody,
@@ -20,8 +22,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings } from "lucide-react";
-import { formatDistanceToNow, addSeconds, format } from "date-fns";
+import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon } from "lucide-react";
+import { formatDistanceToNow, addSeconds, format, subDays, startOfDay } from "date-fns";
 
 const DAYS_OF_WEEK = [
   { value: "mon", label: "Mon" },
@@ -76,6 +78,8 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
   const [editingJobSchedule, setEditingJobSchedule] = useState<string | null>(null);
   const [scheduleValue, setScheduleValue] = useState("");
   const [retentionDays, setRetentionDays] = useState<number>(30);
+  const [candleFromDate, setCandleFromDate] = useState<Date | undefined>(subDays(startOfDay(new Date()), 7));
+  const [candleToDate, setCandleToDate] = useState<Date | undefined>(subDays(startOfDay(new Date()), 1));
   const [jobScheduleConfig, setJobScheduleConfig] = useState<{
     run_days: string[];
     run_start_hour: number;
@@ -234,7 +238,18 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     setRunningCronId(cronJob.id);
 
     try {
-      const { data, error } = await supabase.functions.invoke(cronJob.id);
+      // For refresh-candles, use the date range
+      const invokeBody = cronJob.id === "refresh-candles" && candleFromDate && candleToDate
+        ? { 
+            from_date: candleFromDate.toISOString(),
+            to_date: candleToDate.toISOString(),
+            update_status: true
+          }
+        : {};
+
+      const { data, error } = await supabase.functions.invoke(cronJob.id, {
+        body: invokeBody
+      });
 
       if (error) throw error;
 
@@ -253,9 +268,11 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
             ? `Cleaned up ${(data as any).deleted_count} old records`
             : (data as any)?.count !== undefined
               ? `Synced ${(data as any).count} symbols`
-              : (data as any)?.message
-                ? String((data as any).message)
-                : "Job completed successfully",
+              : (data as any)?.rows_count !== undefined
+                ? `Refreshed ${(data as any).rows_count} candles from ${(data as any).trade_count || 0} trades`
+                : (data as any)?.message
+                  ? String((data as any).message)
+                  : "Job completed successfully",
       });
 
       fetchCronJobs();
@@ -638,6 +655,77 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                             />
                             <p className="text-xs text-muted-foreground">
                               Trades older than this will be deleted
+                            </p>
+                          </div>
+                        )}
+
+                        {cronJob.id === "refresh-candles" && (
+                          <div className="space-y-3">
+                            <Label className="text-sm">Historical Date Range</Label>
+                            <p className="text-xs text-muted-foreground">
+                              Select the date range to recreate candles from trade data
+                            </p>
+                            
+                            <div className="space-y-2">
+                              <Label className="text-xs">From Date</Label>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={cn(
+                                      "w-full justify-start text-left font-normal",
+                                      !candleFromDate && "text-muted-foreground"
+                                    )}
+                                  >
+                                    <CalendarIcon className="mr-2 h-4 w-4" />
+                                    {candleFromDate ? format(candleFromDate, "PPP") : "Pick a date"}
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <CalendarComponent
+                                    mode="single"
+                                    selected={candleFromDate}
+                                    onSelect={setCandleFromDate}
+                                    disabled={(date) => date > new Date()}
+                                    initialFocus
+                                    className={cn("p-3 pointer-events-auto")}
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                            </div>
+
+                            <div className="space-y-2">
+                              <Label className="text-xs">To Date</Label>
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <Button
+                                    variant="outline"
+                                    size="sm"
+                                    className={cn(
+                                      "w-full justify-start text-left font-normal",
+                                      !candleToDate && "text-muted-foreground"
+                                    )}
+                                  >
+                                    <CalendarIcon className="mr-2 h-4 w-4" />
+                                    {candleToDate ? format(candleToDate, "PPP") : "Pick a date"}
+                                  </Button>
+                                </PopoverTrigger>
+                                <PopoverContent className="w-auto p-0" align="start">
+                                  <CalendarComponent
+                                    mode="single"
+                                    selected={candleToDate}
+                                    onSelect={setCandleToDate}
+                                    disabled={(date) => date > new Date() || (candleFromDate && date < candleFromDate)}
+                                    initialFocus
+                                    className={cn("p-3 pointer-events-auto")}
+                                  />
+                                </PopoverContent>
+                              </Popover>
+                            </div>
+
+                            <p className="text-xs text-muted-foreground">
+                              Cron job will use T-7 to T-1 by default
                             </p>
                           </div>
                         )}

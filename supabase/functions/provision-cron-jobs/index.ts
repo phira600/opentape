@@ -27,7 +27,7 @@ const CRON_JOBS: CronJobDefinition[] = [
   },
   {
     name: 'refresh-candles-daily',
-    schedule: '0 1 * * *', // Daily at 1 AM UTC
+    schedule: '0 3 * * *', // Daily at 3 AM UTC
     function_name: 'refresh-candles',
     description: 'Recreates candles for historical trade data (T-7 to T-1)'
   },
