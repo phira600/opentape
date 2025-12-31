@@ -87,7 +87,8 @@ Deno.serve(async (req) => {
   }
 })
 
-// Process incremental refresh for recent trades (after file downloads)
+// Process incremental refresh for recently inserted trades (after file downloads)
+// This finds trades by created_at (when inserted) and builds candles for their trade_time
 async function processIncremental(supabase: any, startTime: number) {
   // Get last refresh time from mv_refresh_log
   const { data: lastRefresh } = await supabase
@@ -98,15 +99,15 @@ async function processIncremental(supabase: any, startTime: number) {
     .limit(1)
     .single()
 
-  // Use 5-minute lookback for backdated trades, or last 30 minutes for first run
-  const lookbackMinutes = lastRefresh ? 5 : 30
-  const processFrom = lastRefresh 
+  // Look for trades CREATED (inserted) since last refresh, with 2-minute overlap for safety
+  const lookbackMinutes = 2
+  const createdSince = lastRefresh 
     ? new Date(new Date(lastRefresh.refreshed_at).getTime() - lookbackMinutes * 60 * 1000)
-    : new Date(Date.now() - 30 * 60 * 1000)
+    : new Date(Date.now() - 60 * 60 * 1000) // First run: last hour
 
-  console.log(`[Incremental] Processing trades from ${processFrom.toISOString()} (lookback: ${lookbackMinutes} min)`)
+  console.log(`[Incremental] Finding trades created since ${createdSince.toISOString()}`)
 
-  const result = await processTradesInRange(supabase, processFrom, new Date(), startTime)
+  const result = await processRecentlyCreatedTrades(supabase, createdSince, startTime)
   
   // Log the refresh
   await supabase.from('mv_refresh_log').insert({
@@ -217,6 +218,100 @@ async function processHistorical(
     }),
     { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
   )
+}
+
+// Process recently CREATED trades (by created_at) and build candles for their trade_time
+// This is the key difference from processTradesInRange - we find trades by insertion time
+// but build candles based on when the trade actually occurred
+async function processRecentlyCreatedTrades(supabase: any, createdSince: Date, startTime: number) {
+  // Fetch trades that were INSERTED recently (regardless of their trade_time)
+  const { data: trades, error: tradesError } = await supabase
+    .from('trades_normalized')
+    .select('symbol, currency, trade_time, price, quantity')
+    .gte('created_at', createdSince.toISOString())
+    .order('trade_time', { ascending: true })
+
+  if (tradesError) {
+    throw new Error(`Failed to fetch trades: ${tradesError.message}`)
+  }
+
+  console.log(`Found ${trades?.length || 0} recently created trades`)
+
+  if (!trades || trades.length === 0) {
+    return { candleCount: 0, tradeCount: 0 }
+  }
+
+  // Group trades by symbol + currency + minute bucket
+  const candleMap = new Map<string, {
+    symbol: string
+    currency: string
+    bucket: string
+    prices: { price: number, time: string }[]
+    volume: number
+    trade_count: number
+  }>()
+
+  for (const trade of trades) {
+    const bucket = new Date(trade.trade_time)
+    bucket.setSeconds(0, 0)
+    const bucketStr = bucket.toISOString()
+    const currency = trade.currency || 'SEK'
+    const key = `${trade.symbol}|${currency}|${bucketStr}`
+
+    if (!candleMap.has(key)) {
+      candleMap.set(key, {
+        symbol: trade.symbol,
+        currency,
+        bucket: bucketStr,
+        prices: [],
+        volume: 0,
+        trade_count: 0
+      })
+    }
+
+    const candle = candleMap.get(key)!
+    candle.prices.push({ price: Number(trade.price), time: trade.trade_time })
+    candle.volume += Number(trade.quantity)
+    candle.trade_count++
+  }
+
+  // Convert to candles array
+  const candles = Array.from(candleMap.values()).map(c => {
+    const sortedPrices = c.prices.sort((a, b) => a.time.localeCompare(b.time))
+    const prices = sortedPrices.map(p => p.price)
+    return {
+      symbol: c.symbol,
+      currency: c.currency,
+      bucket: c.bucket,
+      open: prices[0],
+      high: Math.max(...prices),
+      low: Math.min(...prices),
+      close: prices[prices.length - 1],
+      volume: c.volume,
+      trade_count: c.trade_count
+    }
+  })
+
+  console.log(`Generated ${candles.length} candles from recently created trades`)
+
+  // Upsert candles in batches (these will merge with existing candles if any)
+  const batchSize = 500
+  let upsertedCount = 0
+
+  for (let i = 0; i < candles.length; i += batchSize) {
+    const batch = candles.slice(i, i + batchSize)
+    const { error: upsertError } = await supabase
+      .from('candles_1min')
+      .upsert(batch, { onConflict: 'symbol,currency,bucket' })
+
+    if (upsertError) {
+      console.error(`Upsert batch error: ${upsertError.message}`)
+      throw new Error(`Failed to upsert candles: ${upsertError.message}`)
+    }
+    upsertedCount += batch.length
+  }
+
+  return { candleCount: upsertedCount, tradeCount: trades.length }
 }
 
 // Process trades in a given time range and create candles
