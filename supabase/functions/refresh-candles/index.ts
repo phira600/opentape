@@ -224,16 +224,32 @@ async function processHistorical(
 // This is the key difference from processTradesInRange - we find trades by insertion time
 // but build candles based on when the trade actually occurred
 async function processRecentlyCreatedTrades(supabase: any, createdSince: Date, startTime: number) {
-  // Fetch trades that were INSERTED recently (regardless of their trade_time)
-  const { data: trades, error: tradesError } = await supabase
-    .from('trades_normalized')
-    .select('symbol, currency, trade_time, price, quantity')
-    .gte('created_at', createdSince.toISOString())
-    .order('trade_time', { ascending: true })
+  // Fetch trades that were INSERTED recently (regardless of their trade_time) (paged to avoid default 1000 row limit)
+  const pageSize = 5000
+  const trades: any[] = []
+  let page = 0
 
-  if (tradesError) {
-    throw new Error(`Failed to fetch trades: ${tradesError.message}`)
+  while (true) {
+    const { data: tradesPage, error: tradesError } = await supabase
+      .from('trades_normalized')
+      .select('symbol, currency, trade_time, price, quantity')
+      .gte('created_at', createdSince.toISOString())
+      .order('trade_time', { ascending: true })
+      .range(page * pageSize, (page + 1) * pageSize - 1)
+
+    if (tradesError) {
+      throw new Error(`Failed to fetch trades: ${tradesError.message}`)
+    }
+
+    if (tradesPage && tradesPage.length > 0) {
+      trades.push(...tradesPage)
+    }
+
+    if (!tradesPage || tradesPage.length < pageSize) break
+    page++
+    if (page >= 50) break // hard stop
   }
+
 
   console.log(`Found ${trades?.length || 0} recently created trades`)
 
@@ -316,17 +332,33 @@ async function processRecentlyCreatedTrades(supabase: any, createdSince: Date, s
 
 // Process trades in a given time range and create candles
 async function processTradesInRange(supabase: any, fromDate: Date, toDate: Date, startTime: number) {
-  // Fetch trades in the time window
-  const { data: trades, error: tradesError } = await supabase
-    .from('trades_normalized')
-    .select('symbol, currency, trade_time, price, quantity')
-    .gte('trade_time', fromDate.toISOString())
-    .lt('trade_time', toDate.toISOString())
-    .order('trade_time', { ascending: true })
+  // Fetch trades in the time window (paged to avoid default 1000 row limit)
+  const pageSize = 5000
+  const trades: any[] = []
+  let page = 0
 
-  if (tradesError) {
-    throw new Error(`Failed to fetch trades: ${tradesError.message}`)
+  while (true) {
+    const { data: tradesPage, error: tradesError } = await supabase
+      .from('trades_normalized')
+      .select('symbol, currency, trade_time, price, quantity')
+      .gte('trade_time', fromDate.toISOString())
+      .lt('trade_time', toDate.toISOString())
+      .order('trade_time', { ascending: true })
+      .range(page * pageSize, (page + 1) * pageSize - 1)
+
+    if (tradesError) {
+      throw new Error(`Failed to fetch trades: ${tradesError.message}`)
+    }
+
+    if (tradesPage && tradesPage.length > 0) {
+      trades.push(...tradesPage)
+    }
+
+    if (!tradesPage || tradesPage.length < pageSize) break
+    page++
+    if (page >= 50) break // hard stop
   }
+
 
   console.log(`Fetched ${trades?.length || 0} trades to process`)
 
