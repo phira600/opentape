@@ -27,5 +27,5 @@ verify_jwt = false
 [functions.provision-cron-jobs]
 verify_jwt = false
 
-[functions.refresh-candles]
+[functions.recreate-candles]
 verify_jwt = false

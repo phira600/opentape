@@ -26,12 +26,6 @@ const CRON_JOBS: CronJobDefinition[] = [
     description: 'Cleans up old trades based on retention settings'
   },
   {
-    name: 'recreate-candles-daily',
-    schedule: '0 3 * * *', // Daily at 3 AM UTC
-    function_name: 'refresh-candles',
-    description: 'Recreates 1-minute candles from historical trade data for a configurable date range (default: T-7 to T-1)'
-  },
-  {
     name: 'cboe-sis-symbology-daily',
     schedule: '0 8 * * 1-5', // 8 AM UTC on weekdays
     function_name: 'fetch-symbology',
