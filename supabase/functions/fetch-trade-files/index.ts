@@ -265,28 +265,51 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Refresh candles in background - don't await to avoid timeout
-    console.log('Starting incremental candles refresh in background...')
-    // Trigger incremental candle refresh via edge function (not DB function which can timeout)
+    // Trigger incremental candle refresh with concurrency control
+    console.log('Checking refresh-candles status before triggering...')
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
-    fetch(`${supabaseUrl}/functions/v1/refresh-candles`, {
-      method: 'POST',
-      headers: {
-        'Authorization': `Bearer ${supabaseServiceKey}`,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ incremental: true }) // Incremental mode for recent trades only
-    }).then(async (res) => {
-      const result = await res.json()
-      if (result.success) {
-        console.log(`Incremental candles refresh completed: ${result.rows_count} candles from ${result.trade_count} trades`)
-      } else {
-        console.error('Candles refresh error:', result.error)
-      }
-    }).catch(err => {
-      console.error('Candles refresh call failed:', err)
-    })
+    
+    // Check current status and decide whether to trigger
+    const { data: refreshConfig } = await supabase
+      .from('cron_job_configurations')
+      .select('last_status')
+      .eq('id', 'refresh-candles')
+      .single()
+    
+    const currentStatus = refreshConfig?.last_status || 'idle'
+    
+    if (currentStatus === 'running') {
+      // Already running - set to queued
+      await supabase
+        .from('cron_job_configurations')
+        .update({ last_status: 'queued' })
+        .eq('id', 'refresh-candles')
+      console.log('Refresh candles already running, queued for next run')
+    } else if (currentStatus === 'queued') {
+      // Already queued - skip
+      console.log('Refresh candles already queued, skipping')
+    } else {
+      // idle/success/failed - trigger the refresh
+      console.log('Triggering incremental candles refresh...')
+      fetch(`${supabaseUrl}/functions/v1/refresh-candles`, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${supabaseServiceKey}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({})
+      }).then(async (res) => {
+        const result = await res.json()
+        if (result.success) {
+          console.log(`Incremental candles refresh completed: ${result.rows_count} candles from ${result.trade_count} trades`)
+        } else {
+          console.error('Candles refresh error:', result.error)
+        }
+      }).catch(err => {
+        console.error('Candles refresh call failed:', err)
+      })
+    }
 
     return new Response(
       JSON.stringify({ success: true, results }),
