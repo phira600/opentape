@@ -100,6 +100,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     const { data, error } = await supabase
       .from("cron_job_configurations")
       .select("*")
+      .neq("id", "refresh-candles") // Hide refresh-candles - it runs automatically after downloads
       .order("name");
     
     if (!error && data) {
@@ -238,12 +239,11 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     setRunningCronId(cronJob.id);
 
     try {
-      // For refresh-candles, use the date range
-      const invokeBody = cronJob.id === "refresh-candles" && candleFromDate && candleToDate
+      // For recreate-candles, use the date range
+      const invokeBody = cronJob.id === "recreate-candles" && candleFromDate && candleToDate
         ? { 
             from_date: candleFromDate.toISOString(),
-            to_date: candleToDate.toISOString(),
-            update_status: true
+            to_date: candleToDate.toISOString()
           }
         : {};
 
@@ -659,9 +659,9 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                           </div>
                         )}
 
-                        {cronJob.id === "refresh-candles" && (
+                        {cronJob.id === "recreate-candles" && (
                           <div className="space-y-3">
-                            <Label className="text-sm">Historical Date Range</Label>
+                            <Label className="text-sm">Backfill Date Range</Label>
                             <p className="text-xs text-muted-foreground">
                               Select the date range to recreate candles from trade data
                             </p>
@@ -725,7 +725,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                             </div>
 
                             <p className="text-xs text-muted-foreground">
-                              Cron job will use T-7 to T-1 by default
+                              Select dates and click Run to backfill candles
                             </p>
                           </div>
                         )}

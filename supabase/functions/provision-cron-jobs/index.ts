@@ -63,18 +63,12 @@ Deno.serve(async (req) => {
         }
 
         // Build the HTTP POST command for pg_cron
-        // Include appropriate body for each function type
         const functionUrl = `${supabaseUrl}/functions/v1/${job.function_name}`
-        let bodyJson = '{}'
-        if (job.function_name === 'refresh-candles') {
-          // Historical mode: recreate candles for T-7 to T-1
-          bodyJson = '{"update_status": true, "days_back": 7}'
-        }
         const cronCommand = `
           SELECT net.http_post(
             url := '${functionUrl}',
             headers := '{"Content-Type": "application/json", "Authorization": "Bearer ${supabaseAnonKey}"}'::jsonb,
-            body := '${bodyJson}'::jsonb
+            body := '{}'::jsonb
           ) AS request_id;
         `
 
