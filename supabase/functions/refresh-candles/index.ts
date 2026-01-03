@@ -87,7 +87,7 @@ Deno.serve(async (req) => {
 
     // Log the refresh
     await supabase.from('mv_refresh_log').insert({
-      view_name: 'candles_1min',
+      view_name: 'candles_1min_refresh',
       refreshed_at: new Date().toISOString(),
       refresh_duration_ms: duration,
       rows_count: result.candleCount
@@ -119,7 +119,7 @@ Deno.serve(async (req) => {
 
       // Log the re-run refresh
       await supabase.from('mv_refresh_log').insert({
-        view_name: 'candles_1min',
+        view_name: 'candles_1min_refresh',
         refreshed_at: new Date().toISOString(),
         refresh_duration_ms: rerunDuration,
         rows_count: rerunResult.candleCount
@@ -207,7 +207,7 @@ async function processIncremental(supabase: any, startTime: number) {
   const { data: lastRefresh } = await supabase
     .from('mv_refresh_log')
     .select('refreshed_at')
-    .eq('view_name', 'candles_1min')
+    .eq('view_name', 'candles_1min_refresh')
     .order('refreshed_at', { ascending: false })
     .limit(1)
     .single()

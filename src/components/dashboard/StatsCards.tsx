@@ -48,11 +48,11 @@ export function StatsCards() {
       .limit(1)
       .single();
 
-    // Get latest candles refresh info
+    // Get latest candles refresh info (refresh only, not recreate)
     const { data: candlesLog } = await supabase
       .from("mv_refresh_log")
       .select("refreshed_at, rows_count, refresh_duration_ms")
-      .eq("view_name", "candles_1min")
+      .eq("view_name", "candles_1min_refresh")
       .order("refreshed_at", { ascending: false })
       .limit(1)
       .single();
@@ -195,7 +195,7 @@ export function StatsCards() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Recreate Candles</CardTitle>
+          <CardTitle className="text-sm font-medium">Candle Refresh</CardTitle>
           <RefreshCw className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
