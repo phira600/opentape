@@ -59,6 +59,36 @@ const DEFAULT_JOBS: DefaultJob[] = [
     run_start_hour: 6,
     run_end_hour: 21,
   },
+  {
+    name: 'LSEG Turquoise UK',
+    source_url: 'https://dmd.lseg.com/dmd/TurquoiseUKPost-TradeDocuments',
+    source_type: 'lseg_trqx',
+    is_enabled: true,
+    fetch_interval_seconds: 60,
+    run_days: WEEKDAYS,
+    run_start_hour: 6,
+    run_end_hour: 21,
+  },
+  {
+    name: 'LSEG Turquoise Europe',
+    source_url: 'https://dmd.lseg.com/dmd/TurquoiseEuropePost-TradeDocuments',
+    source_type: 'lseg_tqex',
+    is_enabled: true,
+    fetch_interval_seconds: 60,
+    run_days: WEEKDAYS,
+    run_start_hour: 6,
+    run_end_hour: 21,
+  },
+  {
+    name: 'LSEG LSE',
+    source_url: 'https://dmd.lseg.com/dmd/LSEPost-TradeDocuments',
+    source_type: 'lseg_xlon',
+    is_enabled: true,
+    fetch_interval_seconds: 60,
+    run_days: WEEKDAYS,
+    run_start_hour: 6,
+    run_end_hour: 21,
+  },
 ]
 
 Deno.serve(async (req) => {
