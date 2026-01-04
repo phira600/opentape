@@ -361,6 +361,46 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     return `${String(startHour).padStart(2, "0")}:00-${String(endHour).padStart(2, "0")}:00 (${daysStr})`;
   };
 
+  const formatSourceType = (sourceType: string): string => {
+    const typeLabels: Record<string, string> = {
+      cboe: "CBOE",
+      cboe_bxe: "CBOE BXE",
+      cboe_cxe: "CBOE CXE",
+      cboe_dxe: "CBOE DXE",
+      cboe_sis: "CBOE SIS",
+      nasdaq: "Nasdaq",
+      lseg: "LSEG",
+      lseg_trqx: "LSEG TRQX",
+      lseg_tqex: "LSEG TQEX",
+      lseg_xlon: "LSEG XLON",
+      custom: "Custom",
+    };
+    return typeLabels[sourceType] || sourceType.toUpperCase();
+  };
+
+  const getSourceTypeBadgeClass = (sourceType: string): string => {
+    if (sourceType.startsWith("cboe")) return "border-blue-500/50 text-blue-600 dark:text-blue-400";
+    if (sourceType.startsWith("lseg")) return "border-emerald-500/50 text-emerald-600 dark:text-emerald-400";
+    if (sourceType === "nasdaq") return "border-cyan-500/50 text-cyan-600 dark:text-cyan-400";
+    return "";
+  };
+
+  const getSourceDescription = (sourceType: string): string => {
+    const descriptions: Record<string, string> = {
+      cboe_bxe: "BATS Europe (Amsterdam)",
+      cboe_cxe: "Chi-X Europe",
+      cboe_dxe: "Dark Pool Europe",
+      cboe_sis: "Systematic Internaliser",
+      nasdaq: "Nordic Equity Markets",
+      lseg_trqx: "Turquoise UK MTF",
+      lseg_tqex: "Turquoise Europe MTF",
+      lseg_xlon: "London Stock Exchange",
+      lseg: "LSEG Markets",
+      custom: "Custom data source",
+    };
+    return descriptions[sourceType] || "Trade data source";
+  };
+
   const getStatusBadge = (job: JobConfiguration) => {
     switch (job.last_status) {
       case "success":
@@ -441,12 +481,14 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
           <TableBody>
             {jobs.map((job) => (
               <TableRow key={job.id}>
-                <TableCell className="font-medium">{job.name}</TableCell>
+              <TableCell className="font-medium">{job.name}</TableCell>
                 <TableCell>
-                  <Badge variant="outline">{job.source_type.toUpperCase()}</Badge>
+                  <Badge variant="outline" className={getSourceTypeBadgeClass(job.source_type)}>
+                    {formatSourceType(job.source_type)}
+                  </Badge>
                 </TableCell>
                 <TableCell>
-                  <span className="text-sm text-muted-foreground">Trade data source</span>
+                  <span className="text-sm text-muted-foreground">{getSourceDescription(job.source_type)}</span>
                 </TableCell>
                 <TableCell>{getStatusBadge(job)}</TableCell>
                 <TableCell>

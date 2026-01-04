@@ -95,8 +95,14 @@ export function AddSourceDialog({ onAdded }: AddSourceDialogProps) {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value="cboe">CBOE</SelectItem>
-                <SelectItem value="lseg">LSEG</SelectItem>
+                <SelectItem value="cboe_bxe">CBOE BXE</SelectItem>
+                <SelectItem value="cboe_cxe">CBOE CXE</SelectItem>
+                <SelectItem value="cboe_dxe">CBOE DXE</SelectItem>
+                <SelectItem value="nasdaq">Nasdaq Nordic</SelectItem>
+                <SelectItem value="lseg_trqx">LSEG Turquoise UK</SelectItem>
+                <SelectItem value="lseg_tqex">LSEG Turquoise Europe</SelectItem>
+                <SelectItem value="lseg_xlon">LSEG LSE</SelectItem>
+                <SelectItem value="lseg">LSEG (Generic)</SelectItem>
                 <SelectItem value="custom">Custom</SelectItem>
               </SelectContent>
             </Select>
