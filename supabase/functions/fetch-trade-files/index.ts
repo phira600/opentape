@@ -9,7 +9,7 @@ interface JobConfiguration {
   id: string
   name: string
   source_url: string
-  source_type: 'cboe' | 'cboe_bxe' | 'cboe_cxe' | 'cboe_dxe' | 'cboe_sis' | 'nasdaq' | 'lseg' | 'custom'
+  source_type: 'cboe' | 'cboe_bxe' | 'cboe_cxe' | 'cboe_dxe' | 'cboe_sis' | 'nasdaq' | 'lseg' | 'lseg_trqx' | 'lseg_tqex' | 'lseg_xlon' | 'custom'
   is_enabled: boolean
   last_run_at: string | null
 }
@@ -110,6 +110,11 @@ Deno.serve(async (req) => {
           const nasdaqFiles = await fetchNasdaqDataSinceLastRun(job.last_run_at, supabase, job.id)
           files.push(...nasdaqFiles)
           console.log(`Fetched ${nasdaqFiles.length} Nasdaq files`)
+        } else if (job.source_type === 'lseg_trqx' || job.source_type === 'lseg_tqex' || job.source_type === 'lseg_xlon') {
+          // LSEG - scrape DMD page for file links
+          const lsegFiles = await fetchLsegDataSinceLastRun(job.source_url, supabase, job.id)
+          files.push(...lsegFiles)
+          console.log(`Fetched ${lsegFiles.length} LSEG files`)
         } else {
           // Standard fetch for other sources
           const response = await fetch(job.source_url, {
@@ -181,6 +186,8 @@ Deno.serve(async (req) => {
             trades = parseNasdaqData(rawData, job.name)
           } else if (job.source_type === 'lseg') {
             trades = parseLsegData(rawData, contentType, job.name)
+          } else if (job.source_type === 'lseg_trqx' || job.source_type === 'lseg_tqex' || job.source_type === 'lseg_xlon') {
+            trades = parseLsegPostTradeData(rawData, job.name)
           } else {
             trades = parseGenericData(rawData, contentType, job.name)
           }
@@ -704,7 +711,262 @@ function parseNasdaqData(rawData: string, jobName: string): TradeRecord[] {
   return trades
 }
 
-// Helper to parse CSV lines properly (handles quoted fields with commas)
+// LSEG DMD: Scrape HTML page for file links, download CSV/GZ files
+// File patterns:
+//   End-of-day: XXXX-post-YYYY-MM-DD.csv.gz (consolidated, priority)
+//   Intraday: XXXX-post-YYYY-MM-DDTHH_MM.csv
+async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId: string): Promise<FetchedFile[]> {
+  const files: FetchedFile[] = []
+  
+  try {
+    // Get already processed files for this job
+    const { data: processedFiles } = await supabase
+      .from('processed_files')
+      .select('file_name')
+      .eq('job_id', jobId)
+    
+    const processedSet = new Set((processedFiles || []).map((f: { file_name: string }) => f.file_name))
+    console.log(`LSEG: ${processedSet.size} files already processed`)
+    
+    // Fetch the HTML page
+    const response = await fetch(sourceUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      }
+    })
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch LSEG page: ${response.status}`)
+    }
+    
+    const html = await response.text()
+    
+    // Extract file links from HTML using regex
+    // Looking for href attributes containing .csv or .csv.gz files
+    const linkRegex = /href="([^"]*\.csv(?:\.gz)?)"/gi
+    const matches = [...html.matchAll(linkRegex)]
+    
+    console.log(`LSEG: Found ${matches.length} file links in HTML`)
+    
+    // Group files by date
+    // End-of-day pattern: XXXX-post-YYYY-MM-DD.csv.gz
+    // Intraday pattern: XXXX-post-YYYY-MM-DDTHH_MM.csv
+    const filesByDate: Map<string, { gzFile?: string; csvFiles: string[] }> = new Map()
+    
+    for (const match of matches) {
+      const href = match[1]
+      // Extract just the filename from the href
+      const fileName = href.split('/').pop() || href
+      
+      // Match end-of-day: XXXX-post-YYYY-MM-DD.csv.gz
+      const gzMatch = fileName.match(/^([A-Z]{4})-post-(\d{4}-\d{2}-\d{2})\.csv\.gz$/)
+      if (gzMatch) {
+        const date = gzMatch[2]
+        if (!filesByDate.has(date)) {
+          filesByDate.set(date, { csvFiles: [] })
+        }
+        filesByDate.get(date)!.gzFile = fileName
+        continue
+      }
+      
+      // Match intraday: XXXX-post-YYYY-MM-DDTHH_MM.csv
+      const csvMatch = fileName.match(/^([A-Z]{4})-post-(\d{4}-\d{2}-\d{2})T\d{2}_\d{2}\.csv$/)
+      if (csvMatch) {
+        const date = csvMatch[2]
+        if (!filesByDate.has(date)) {
+          filesByDate.set(date, { csvFiles: [] })
+        }
+        filesByDate.get(date)!.csvFiles.push(fileName)
+      }
+    }
+    
+    console.log(`LSEG: Found files for ${filesByDate.size} dates`)
+    
+    // Process each date - if gz exists and not processed, use it; otherwise use individual csvs
+    for (const [date, dateFiles] of filesByDate) {
+      // Check if gz file exists and not processed
+      if (dateFiles.gzFile && !processedSet.has(dateFiles.gzFile)) {
+        // Build full URL - links may be relative
+        const fileUrl = dateFiles.gzFile.startsWith('http') 
+          ? dateFiles.gzFile 
+          : new URL(dateFiles.gzFile, sourceUrl).href
+        
+        console.log(`LSEG: Downloading end-of-day file ${dateFiles.gzFile}`)
+        const fileData = await fetchAndDecompressGz(fileUrl)
+        if (fileData) {
+          files.push({ data: fileData, url: fileUrl, fileName: dateFiles.gzFile })
+        }
+      } else if (!dateFiles.gzFile) {
+        // No gz file, download individual CSVs
+        for (const csvFile of dateFiles.csvFiles) {
+          if (processedSet.has(csvFile)) continue
+          
+          const fileUrl = csvFile.startsWith('http')
+            ? csvFile
+            : new URL(csvFile, sourceUrl).href
+          
+          try {
+            const csvResponse = await fetch(fileUrl, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/csv,*/*',
+              }
+            })
+            if (csvResponse.ok) {
+              const data = await csvResponse.text()
+              if (data && data.length > 100) {
+                files.push({ data, url: fileUrl, fileName: csvFile })
+              }
+            }
+          } catch (e) {
+            console.error(`LSEG: Failed to download ${csvFile}: ${e}`)
+          }
+          
+          // Small delay to avoid rate limiting
+          await new Promise(r => setTimeout(r, 100))
+        }
+      }
+    }
+    
+    console.log(`LSEG: Downloaded ${files.length} new files`)
+  } catch (e) {
+    console.error(`LSEG fetch error: ${e}`)
+  }
+  
+  return files
+}
+
+// Helper to fetch and decompress gzipped files
+async function fetchAndDecompressGz(url: string): Promise<string | null> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+        'Accept': '*/*',
+      }
+    })
+    if (!response.ok) {
+      console.error(`LSEG: Failed to fetch ${url}: ${response.status}`)
+      return null
+    }
+    
+    const gzBuffer = await response.arrayBuffer()
+    
+    // Use DecompressionStream for gzip decompression
+    const decompressed = new DecompressionStream('gzip')
+    const stream = new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(gzBuffer))
+        controller.close()
+      }
+    }).pipeThrough(decompressed)
+    
+    const reader = stream.getReader()
+    const chunks: Uint8Array[] = []
+    
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      chunks.push(value)
+    }
+    
+    // Combine chunks and decode
+    const totalLength = chunks.reduce((acc, chunk) => acc + chunk.length, 0)
+    const combined = new Uint8Array(totalLength)
+    let offset = 0
+    for (const chunk of chunks) {
+      combined.set(chunk, offset)
+      offset += chunk.length
+    }
+    
+    const decoder = new TextDecoder('utf-8')
+    return decoder.decode(combined)
+  } catch (e) {
+    console.error(`Failed to decompress ${url}: ${e}`)
+    return null
+  }
+}
+
+// Parse LSEG post-trade CSV format (semicolon-separated)
+// Columns based on sample file:
+// Trading date and time;Instrument identification code;Price;Price currency;
+// Price notation;Quantity;Venue of execution;Publication date and time;
+// Venue of Publication;Transaction identification code;Flags
+function parseLsegPostTradeData(rawData: string, jobName: string): TradeRecord[] {
+  const trades: TradeRecord[] = []
+  
+  try {
+    const lines = rawData.split('\n').filter(line => line.trim())
+    
+    if (lines.length < 2) {
+      console.log('LSEG: No data lines found')
+      return trades
+    }
+
+    // Skip the "sep=;" line if present
+    let headerLineIdx = 0
+    if (lines[0].includes('sep=')) {
+      headerLineIdx = 1
+    }
+
+    // Parse header to find column indices
+    const headers = lines[headerLineIdx].split(';').map(h => h.trim().toLowerCase().replace(/\s+/g, '_'))
+    console.log(`LSEG headers: ${headers.slice(0, 8).join(', ')}...`)
+    
+    // Map columns based on the sample file format
+    const indices = {
+      tradingDateTime: headers.findIndex(h => h === 'trading_date_and_time'),
+      symbol: headers.findIndex(h => h === 'instrument_identification_code'),
+      price: headers.findIndex(h => h === 'price'),
+      currency: headers.findIndex(h => h === 'price_currency'),
+      quantity: headers.findIndex(h => h === 'quantity'),
+      venue: headers.findIndex(h => h === 'venue_of_execution'),
+      transactionId: headers.findIndex(h => h === 'transaction_identification_code'),
+      flags: headers.findIndex(h => h === 'flags'),
+    }
+
+    console.log(`LSEG column indices: symbol=${indices.symbol}, price=${indices.price}, qty=${indices.quantity}, venue=${indices.venue}`)
+
+    for (let i = headerLineIdx + 1; i < lines.length; i++) {
+      const values = lines[i].split(';').map(v => v.trim())
+      
+      if (values.length < 7) continue
+
+      const symbol = indices.symbol >= 0 ? values[indices.symbol] : ''
+      const priceStr = indices.price >= 0 ? values[indices.price] : '0'
+      const qtyStr = indices.quantity >= 0 ? values[indices.quantity] : '0'
+      const tradeTime = indices.tradingDateTime >= 0 ? values[indices.tradingDateTime] : new Date().toISOString()
+      const venue = indices.venue >= 0 ? values[indices.venue] : 'LSEG'
+      
+      // Skip if missing required fields
+      if (!symbol || symbol === '') continue
+      
+      const price = parseFloat(priceStr) || 0
+      const quantity = parseFloat(qtyStr) || 0
+      
+      // Skip zero-price or zero-quantity trades
+      if (price === 0 || quantity === 0) continue
+
+      trades.push({
+        symbol,
+        price,
+        quantity,
+        trade_time: tradeTime,
+        venue: venue || 'LSEG',
+        currency: indices.currency >= 0 ? values[indices.currency] : undefined,
+        market_mechanism: indices.flags >= 0 ? values[indices.flags] : undefined,
+        transaction_id: indices.transactionId >= 0 ? values[indices.transactionId] : undefined,
+      })
+    }
+
+    console.log(`LSEG: Parsed ${trades.length} trades from ${lines.length - headerLineIdx - 1} lines`)
+  } catch (e) {
+    console.error(`Failed to parse LSEG data for ${jobName}: ${e}`)
+  }
+  
+  return trades
+}
 function parseCSVLine(line: string, separator: string = ','): string[] {
   const result: string[] = []
   let current = ''
