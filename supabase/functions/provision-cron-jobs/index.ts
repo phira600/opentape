@@ -9,25 +9,74 @@ interface CronJobDefinition {
   name: string
   schedule: string
   function_name: string
+  body?: Record<string, string>
   description: string
 }
 
+// Each data source gets its own cron job for parallel execution
 const CRON_JOBS: CronJobDefinition[] = [
+  // CBOE Jobs - run every minute on weekdays
   {
-    name: 'fetch-trade-files-weekdays',
-    schedule: '* * * * 1-5', // Every minute on weekdays
+    name: 'fetch-cboe-bxe',
+    schedule: '* * * * 1-5',
     function_name: 'fetch-trade-files',
-    description: 'Fetches trade files from all enabled data sources'
+    body: { source_type: 'cboe_bxe' },
+    description: 'Fetches trade files from CBOE BXE'
   },
   {
+    name: 'fetch-cboe-cxe',
+    schedule: '* * * * 1-5',
+    function_name: 'fetch-trade-files',
+    body: { source_type: 'cboe_cxe' },
+    description: 'Fetches trade files from CBOE CXE'
+  },
+  {
+    name: 'fetch-cboe-dxe',
+    schedule: '* * * * 1-5',
+    function_name: 'fetch-trade-files',
+    body: { source_type: 'cboe_dxe' },
+    description: 'Fetches trade files from CBOE DXE'
+  },
+  // LSEG Jobs - run every minute on weekdays
+  {
+    name: 'fetch-lseg-trqx',
+    schedule: '* * * * 1-5',
+    function_name: 'fetch-trade-files',
+    body: { source_type: 'lseg_trqx' },
+    description: 'Fetches trade files from LSEG Turquoise UK'
+  },
+  {
+    name: 'fetch-lseg-tqex',
+    schedule: '* * * * 1-5',
+    function_name: 'fetch-trade-files',
+    body: { source_type: 'lseg_tqex' },
+    description: 'Fetches trade files from LSEG Turquoise Europe'
+  },
+  {
+    name: 'fetch-lseg-xlon',
+    schedule: '* * * * 1-5',
+    function_name: 'fetch-trade-files',
+    body: { source_type: 'lseg_xlon' },
+    description: 'Fetches trade files from LSEG LSE'
+  },
+  // Nasdaq Job - run every minute on weekdays
+  {
+    name: 'fetch-nasdaq',
+    schedule: '* * * * 1-5',
+    function_name: 'fetch-trade-files',
+    body: { source_type: 'nasdaq' },
+    description: 'Fetches trade files from Nasdaq Nordic'
+  },
+  // Maintenance jobs
+  {
     name: 'cleanup-old-trades-daily',
-    schedule: '0 0 * * *', // Daily at midnight
+    schedule: '0 0 * * *',
     function_name: 'cleanup-old-trades',
     description: 'Cleans up old trades based on retention settings'
   },
   {
     name: 'cboe-sis-symbology-daily',
-    schedule: '0 8 * * 1-5', // 8 AM UTC on weekdays
+    schedule: '0 8 * * 1-5',
     function_name: 'fetch-symbology',
     description: 'Fetches symbol listings from CBOE SIS'
   }
@@ -64,11 +113,12 @@ Deno.serve(async (req) => {
 
         // Build the HTTP POST command for pg_cron
         const functionUrl = `${supabaseUrl}/functions/v1/${job.function_name}`
+        const bodyJson = job.body ? JSON.stringify(job.body) : '{}'
         const cronCommand = `
           SELECT net.http_post(
             url := '${functionUrl}',
             headers := '{"Content-Type": "application/json", "Authorization": "Bearer ${supabaseAnonKey}"}'::jsonb,
-            body := '{}'::jsonb
+            body := '${bodyJson}'::jsonb
           ) AS request_id;
         `
 

@@ -43,9 +43,9 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
-    const { job_id } = await req.json().catch(() => ({}))
+    const { job_id, source_type } = await req.json().catch(() => ({}))
 
-    // Fetch enabled jobs (or specific job if job_id provided)
+    // Fetch enabled jobs (filter by job_id or source_type if provided)
     let query = supabase
       .from('job_configurations')
       .select('*')
@@ -53,6 +53,10 @@ Deno.serve(async (req) => {
     
     if (job_id) {
       query = query.eq('id', job_id)
+    }
+    
+    if (source_type) {
+      query = query.eq('source_type', source_type)
     }
 
     const { data: jobs, error: jobsError } = await query
