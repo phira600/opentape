@@ -781,32 +781,29 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
       }
     }
     
-    console.log(`LSEG: Found files for ${filesByDate.size} dates`)
+  console.log(`LSEG: Found files for ${filesByDate.size} dates`)
     
-    // Process each date - if gz exists and not processed, use it; otherwise use individual csvs
+    // LSEG files are hosted at dmd.lseg.com root, not under /dmd/
+    const LSEG_FILE_BASE = 'https://dmd.lseg.com/'
+    
+    // Get today's date in YYYY-MM-DD format
+    const today = new Date().toISOString().split('T')[0]
+    
+    // Process each date
     for (const [date, dateFiles] of filesByDate) {
-      // Check if gz file exists and not processed
-      if (dateFiles.gzFile && !processedSet.has(dateFiles.gzFile)) {
-        // Build full URL - links may be relative
-        const fileUrl = dateFiles.gzFile.startsWith('http') 
-          ? dateFiles.gzFile 
-          : new URL(dateFiles.gzFile, sourceUrl).href
-        
-        console.log(`LSEG: Downloading end-of-day file ${dateFiles.gzFile}`)
-        const fileData = await fetchAndDecompressGz(fileUrl)
-        if (fileData) {
-          files.push({ data: fileData, url: fileUrl, fileName: dateFiles.gzFile })
-        }
-      } else if (!dateFiles.gzFile) {
-        // No gz file, download individual CSVs
+      const isToday = date === today
+      
+      if (isToday) {
+        // Current day: always use intraday CSV files (gz may be incomplete)
+        console.log(`LSEG: Processing today (${date}) - using intraday files only`)
         for (const csvFile of dateFiles.csvFiles) {
           if (processedSet.has(csvFile)) continue
           
-          const fileUrl = csvFile.startsWith('http')
-            ? csvFile
-            : new URL(csvFile, sourceUrl).href
+          // Use fixed base URL since files are at dmd.lseg.com root
+          const fileUrl = `${LSEG_FILE_BASE}${csvFile}`
           
           try {
+            console.log(`LSEG: Downloading intraday file ${csvFile}`)
             const csvResponse = await fetch(fileUrl, {
               headers: {
                 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
@@ -818,6 +815,8 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
               if (data && data.length > 100) {
                 files.push({ data, url: fileUrl, fileName: csvFile })
               }
+            } else {
+              console.log(`LSEG: Failed to fetch ${csvFile}: ${csvResponse.status}`)
             }
           } catch (e) {
             console.error(`LSEG: Failed to download ${csvFile}: ${e}`)
@@ -825,6 +824,43 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
           
           // Small delay to avoid rate limiting
           await new Promise(r => setTimeout(r, 100))
+        }
+      } else {
+        // Past dates: prefer gz file if available and not processed
+        if (dateFiles.gzFile && !processedSet.has(dateFiles.gzFile)) {
+          const fileUrl = `${LSEG_FILE_BASE}${dateFiles.gzFile}`
+          
+          console.log(`LSEG: Downloading end-of-day file ${dateFiles.gzFile}`)
+          const fileData = await fetchAndDecompressGz(fileUrl)
+          if (fileData) {
+            files.push({ data: fileData, url: fileUrl, fileName: dateFiles.gzFile })
+          }
+        } else if (!dateFiles.gzFile) {
+          // No gz file for past date, download individual CSVs
+          for (const csvFile of dateFiles.csvFiles) {
+            if (processedSet.has(csvFile)) continue
+            
+            const fileUrl = `${LSEG_FILE_BASE}${csvFile}`
+            
+            try {
+              const csvResponse = await fetch(fileUrl, {
+                headers: {
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                  'Accept': 'text/csv,*/*',
+                }
+              })
+              if (csvResponse.ok) {
+                const data = await csvResponse.text()
+                if (data && data.length > 100) {
+                  files.push({ data, url: fileUrl, fileName: csvFile })
+                }
+              }
+            } catch (e) {
+              console.error(`LSEG: Failed to download ${csvFile}: ${e}`)
+            }
+            
+            await new Promise(r => setTimeout(r, 100))
+          }
         }
       }
     }
