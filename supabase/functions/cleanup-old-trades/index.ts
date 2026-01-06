@@ -5,8 +5,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const BATCH_SIZE = 50000  // Delete 50k rows per batch
-const MAX_BATCHES = 20    // Max 20 batches per run (1M rows max per invocation)
+const BATCH_SIZE = 5000   // Delete 5k rows per batch (smaller to avoid timeouts)
+const MAX_BATCHES = 100   // Max 100 batches per run (500k rows max per invocation)
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
