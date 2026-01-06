@@ -5,6 +5,9 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
+const BATCH_SIZE = 50000  // Delete 50k rows per batch
+const MAX_BATCHES = 20    // Max 20 batches per run (1M rows max per invocation)
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders })
@@ -15,32 +18,66 @@ Deno.serve(async (req) => {
   const supabase = createClient(supabaseUrl, supabaseServiceKey)
 
   try {
-    // Get retention days from configuration
+    // Check if job is enabled and get retention settings
     const { data: config, error: configError } = await supabase
       .from('cron_job_configurations')
-      .select('retention_days')
+      .select('is_enabled, retention_days')
       .eq('id', 'cleanup-old-trades')
       .single()
 
-    const retentionDays = config?.retention_days || 30
-    console.log(`Starting cleanup of trades older than ${retentionDays} days...`)
-
-    // Call the cleanup function with retention days
-    const { data, error } = await supabase.rpc('cleanup_old_trades', {
-      retention_days: retentionDays
-    })
-
-    if (error) {
-      throw new Error(`Cleanup failed: ${error.message}`)
+    if (configError) {
+      console.log(`Config error: ${configError.message}`)
     }
 
-    const deletedCount = data || 0
-    console.log(`Cleanup complete. Deleted ${deletedCount} trades.`)
+    if (!config?.is_enabled) {
+      console.log('Cleanup job is disabled, skipping execution')
+      return new Response(
+        JSON.stringify({ success: true, message: 'Job is disabled', deleted_count: 0 }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
 
-    // Refresh the materialized view after cleanup
-    await supabase.rpc('refresh_candles')
+    const retentionDays = config?.retention_days || 30
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays)
+    
+    console.log(`Starting batched cleanup of trades older than ${retentionDays} days (before ${cutoffDate.toISOString()})...`)
 
-    // Update cron job configuration
+    let totalDeleted = 0
+    let batchCount = 0
+
+    // Delete in batches to avoid timeouts
+    while (batchCount < MAX_BATCHES) {
+      const { data, error } = await supabase.rpc('cleanup_old_trades_batch', {
+        cutoff_date: cutoffDate.toISOString(),
+        batch_size: BATCH_SIZE
+      })
+
+      if (error) {
+        throw new Error(`Batch ${batchCount + 1} failed: ${error.message}`)
+      }
+
+      const deletedCount = data || 0
+      totalDeleted += deletedCount
+      batchCount++
+
+      console.log(`Batch ${batchCount}: Deleted ${deletedCount} trades (total: ${totalDeleted})`)
+
+      // If we deleted less than batch size, we're done
+      if (deletedCount < BATCH_SIZE) {
+        break
+      }
+    }
+
+    console.log(`Cleanup complete. Deleted ${totalDeleted} trades in ${batchCount} batches.`)
+
+    // Only refresh candles if we actually deleted something
+    if (totalDeleted > 0) {
+      console.log('Refreshing candles materialized view...')
+      await supabase.rpc('refresh_candles')
+    }
+
+    // Update cron job configuration with success status
     await supabase
       .from('cron_job_configurations')
       .update({
@@ -53,9 +90,10 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({ 
         success: true, 
-        deleted_count: deletedCount,
+        deleted_count: totalDeleted,
+        batches: batchCount,
         retention_days: retentionDays,
-        message: `Deleted ${deletedCount} trades older than ${retentionDays} days` 
+        message: `Deleted ${totalDeleted} trades in ${batchCount} batches` 
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
@@ -63,6 +101,20 @@ Deno.serve(async (req) => {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error(`Cleanup error: ${errorMessage}`)
+
+    // Update error status in configuration
+    try {
+      await supabase
+        .from('cron_job_configurations')
+        .update({
+          last_run_at: new Date().toISOString(),
+          last_status: 'error',
+          last_error: errorMessage
+        })
+        .eq('id', 'cleanup-old-trades')
+    } catch (updateError) {
+      console.error('Failed to update error status:', updateError)
+    }
 
     return new Response(
       JSON.stringify({ success: false, error: errorMessage }),
