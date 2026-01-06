@@ -474,7 +474,10 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
       const symbol = indices.symbol >= 0 ? values[indices.symbol]?.trim() : ''
       const priceStr = indices.price >= 0 ? values[indices.price]?.trim() : '0'
       const qtyStr = indices.executedShares >= 0 ? values[indices.executedShares]?.trim() : '0'
-      const tradeTime = indices.tradingDateTime >= 0 ? values[indices.tradingDateTime]?.trim() : new Date().toISOString()
+      // Prefer 'Timestamp' column (precise) over 'Trading Date Time' (often just date)
+      const rawTimestamp = indices.timestamp >= 0 ? values[indices.timestamp]?.trim() : null
+      const rawTradingDateTime = indices.tradingDateTime >= 0 ? values[indices.tradingDateTime]?.trim() : null
+      const tradeTime = rawTimestamp || rawTradingDateTime || new Date().toISOString()
       const venue = indices.executionVenue >= 0 ? values[indices.executionVenue]?.trim() : 'CBOE'
       
       // Skip if missing required fields
