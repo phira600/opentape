@@ -261,18 +261,33 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
       }
 
       // Backend functions are responsible for persisting their own run status.
+      const result = data as any;
+      
+      // Build toast message based on response type
+      let toastTitle = "Job complete";
+      let toastDescription = "Job completed successfully";
+      
+      if (result?.deleted_count !== undefined) {
+        // Cleanup job response
+        if (result.hit_limit && result.remaining_count > 0) {
+          toastTitle = "Cleanup in progress";
+          toastDescription = `Deleted ${result.deleted_count.toLocaleString()} trades. ${result.remaining_count.toLocaleString()} remaining - run again to continue.`;
+        } else if (result.deleted_count > 0) {
+          toastDescription = `Cleanup complete. Deleted ${result.deleted_count.toLocaleString()} trades.`;
+        } else {
+          toastDescription = "No old trades to clean up.";
+        }
+      } else if (result?.count !== undefined) {
+        toastDescription = `Synced ${result.count} symbols`;
+      } else if (result?.rows_count !== undefined) {
+        toastDescription = `Refreshed ${result.rows_count} candles from ${result.trade_count || 0} trades`;
+      } else if (result?.message) {
+        toastDescription = String(result.message);
+      }
+      
       toast({
-        title: "Job complete",
-        description:
-          (data as any)?.deleted_count !== undefined
-            ? `Cleaned up ${(data as any).deleted_count} old records`
-            : (data as any)?.count !== undefined
-              ? `Synced ${(data as any).count} symbols`
-              : (data as any)?.rows_count !== undefined
-                ? `Refreshed ${(data as any).rows_count} candles from ${(data as any).trade_count || 0} trades`
-                : (data as any)?.message
-                  ? String((data as any).message)
-                  : "Job completed successfully",
+        title: toastTitle,
+        description: toastDescription,
       });
 
       fetchCronJobs();

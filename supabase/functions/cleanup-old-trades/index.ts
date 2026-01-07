@@ -5,8 +5,8 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-const BATCH_SIZE = 5000   // Delete 5k rows per batch (smaller to avoid timeouts)
-const MAX_BATCHES = 100   // Max 100 batches per run (500k rows max per invocation)
+const BATCH_SIZE = 20000  // Delete 20k rows per batch (increased for faster cleanup)
+const MAX_BATCHES = 150   // Max 150 batches per run (3M rows max per invocation)
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -45,6 +45,7 @@ Deno.serve(async (req) => {
 
     let totalDeleted = 0
     let batchCount = 0
+    let lastBatchCount = 0
 
     // Delete in batches to avoid timeouts
     while (batchCount < MAX_BATCHES) {
@@ -58,6 +59,7 @@ Deno.serve(async (req) => {
       }
 
       const deletedCount = data || 0
+      lastBatchCount = deletedCount
       totalDeleted += deletedCount
       batchCount++
 
@@ -69,7 +71,23 @@ Deno.serve(async (req) => {
       }
     }
 
-    console.log(`Cleanup complete. Deleted ${totalDeleted} trades in ${batchCount} batches.`)
+    // Check if we hit the limit (more work may remain)
+    const hitLimit = batchCount >= MAX_BATCHES && lastBatchCount === BATCH_SIZE
+
+    // Get remaining count of old trades
+    let remainingCount = 0
+    if (hitLimit || totalDeleted > 0) {
+      const { count, error: countError } = await supabase
+        .from('trades_normalized')
+        .select('*', { count: 'exact', head: true })
+        .lt('trade_time', cutoffDate.toISOString())
+      
+      if (!countError) {
+        remainingCount = count || 0
+      }
+    }
+
+    console.log(`Cleanup complete. Deleted ${totalDeleted} trades in ${batchCount} batches. Remaining: ${remainingCount}`)
 
     // Only refresh candles if we actually deleted something
     if (totalDeleted > 0) {
@@ -87,13 +105,21 @@ Deno.serve(async (req) => {
       })
       .eq('id', 'cleanup-old-trades')
 
+    const message = hitLimit
+      ? `Deleted ${totalDeleted.toLocaleString()} trades. ${remainingCount.toLocaleString()} remaining - run again to continue.`
+      : totalDeleted > 0
+        ? `Cleanup complete. Deleted ${totalDeleted.toLocaleString()} trades.`
+        : 'No old trades to clean up.'
+
     return new Response(
       JSON.stringify({ 
         success: true, 
         deleted_count: totalDeleted,
+        remaining_count: remainingCount,
+        hit_limit: hitLimit,
         batches: batchCount,
         retention_days: retentionDays,
-        message: `Deleted ${totalDeleted} trades in ${batchCount} batches` 
+        message
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     )
