@@ -67,12 +67,12 @@ const CRON_JOBS: CronJobDefinition[] = [
     body: { source_type: 'nasdaq' },
     description: 'Fetches trade files from Nasdaq Nordic'
   },
-  // Maintenance jobs
+  // Maintenance jobs - running every 4 hours to clear backlog faster
   {
     name: 'cleanup-old-trades-daily',
-    schedule: '0 0 * * *',
+    schedule: '0 */4 * * *',
     function_name: 'cleanup-old-trades',
-    description: 'Cleans up old trades based on retention settings'
+    description: 'Cleans up old trades based on retention settings (every 4 hours)'
   },
   {
     name: 'cboe-sis-symbology-daily',
