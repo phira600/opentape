@@ -341,13 +341,19 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     
     let description = "";
     
-    // Interval
+    // Minute interval (e.g., */5 * * * *)
     if (minute.startsWith("*/")) {
       const interval = minute.slice(2);
       return `Every ${interval} min`;
     }
     
-    // Time
+    // Hour interval (e.g., 0 */4 * * *)
+    if (hour.startsWith("*/")) {
+      const interval = hour.slice(2);
+      return `Every ${interval} hours`;
+    }
+    
+    // Specific time
     if (hour !== "*" && minute !== "*") {
       description += `${hour.padStart(2, "0")}:${minute.padStart(2, "0")} UTC`;
     }
