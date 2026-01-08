@@ -22,8 +22,25 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon } from "lucide-react";
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+  SheetDescription,
+} from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon, Info, FileText, Copy, ExternalLink } from "lucide-react";
 import { formatDistanceToNow, addSeconds, format, subDays, startOfDay } from "date-fns";
+
+interface ActivityLogEntry {
+  id: string;
+  job_id: string | null;
+  log_type: string;
+  message: string;
+  details: unknown;
+  created_at: string;
+}
 
 const DAYS_OF_WEEK = [
   { value: "mon", label: "Mon" },
@@ -89,6 +106,46 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     run_start_hour: 6,
     run_end_hour: 21,
   });
+  
+  // Job logs drawer state
+  const [selectedJobForLogs, setSelectedJobForLogs] = useState<JobConfiguration | null>(null);
+  const [jobLogs, setJobLogs] = useState<ActivityLogEntry[]>([]);
+  const [isLoadingLogs, setIsLoadingLogs] = useState(false);
+
+  const fetchJobLogs = async (job: JobConfiguration) => {
+    setSelectedJobForLogs(job);
+    setIsLoadingLogs(true);
+    const { data } = await supabase
+      .from("activity_logs")
+      .select("*")
+      .eq("job_id", job.id)
+      .order("created_at", { ascending: false })
+      .limit(100);
+    
+    setJobLogs(data || []);
+    setIsLoadingLogs(false);
+  };
+
+  const copyToClipboard = (text: string) => {
+    navigator.clipboard.writeText(text);
+    toast({
+      title: "Copied",
+      description: "URL copied to clipboard",
+    });
+  };
+
+  const getLogBadgeVariant = (logType: string) => {
+    switch (logType) {
+      case "success":
+        return "default";
+      case "error":
+        return "destructive";
+      case "warning":
+        return "secondary";
+      default:
+        return "outline";
+    }
+  };
 
   useEffect(() => {
     if (showCronJobs) {
@@ -502,7 +559,74 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
           <TableBody>
             {jobs.map((job) => (
               <TableRow key={job.id}>
-              <TableCell className="font-medium">{job.name}</TableCell>
+                <TableCell className="font-medium">
+                  <div className="flex items-center gap-2">
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <Button variant="ghost" size="sm" className="h-6 w-6 p-0">
+                          <Info className="h-4 w-4 text-muted-foreground" />
+                        </Button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-96" align="start">
+                        <div className="space-y-3">
+                          <div className="flex items-center justify-between">
+                            <h4 className="font-semibold">{job.name}</h4>
+                            <Badge variant="outline" className={getSourceTypeBadgeClass(job.source_type)}>
+                              {formatSourceType(job.source_type)}
+                            </Badge>
+                          </div>
+                          
+                          <div className="space-y-2">
+                            <Label className="text-xs text-muted-foreground">Base URL</Label>
+                            <div className="flex items-center gap-2">
+                              <code className="flex-1 text-xs bg-muted p-2 rounded break-all">
+                                {job.source_url}
+                              </code>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 shrink-0"
+                                onClick={() => copyToClipboard(job.source_url)}
+                              >
+                                <Copy className="h-3 w-3" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0 shrink-0"
+                                asChild
+                              >
+                                <a href={job.source_url} target="_blank" rel="noopener noreferrer">
+                                  <ExternalLink className="h-3 w-3" />
+                                </a>
+                              </Button>
+                            </div>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Description</Label>
+                            <p className="text-sm">{getSourceDescription(job.source_type)}</p>
+                          </div>
+
+                          <div className="space-y-1">
+                            <Label className="text-xs text-muted-foreground">Fetch Interval</Label>
+                            <p className="text-sm">{job.fetch_interval_seconds || 60} seconds</p>
+                          </div>
+
+                          {job.last_error && (
+                            <div className="space-y-1">
+                              <Label className="text-xs text-destructive">Last Error</Label>
+                              <p className="text-sm text-destructive bg-destructive/10 p-2 rounded">
+                                {job.last_error}
+                              </p>
+                            </div>
+                          )}
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                    <span>{job.name}</span>
+                  </div>
+                </TableCell>
                 <TableCell>
                   <Badge variant="outline" className={getSourceTypeBadgeClass(job.source_type)}>
                     {formatSourceType(job.source_type)}
@@ -611,18 +735,29 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                   />
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleManualRun(job)}
-                    disabled={runningId === job.id}
-                  >
-                    {runningId === job.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => fetchJobLogs(job)}
+                      title="View logs"
+                    >
+                      <FileText className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleManualRun(job)}
+                      disabled={runningId === job.id}
+                      title="Run now"
+                    >
+                      {runningId === job.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -826,6 +961,67 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
           </TableBody>
         </Table>
       </div>
+
+      {/* Job Logs Drawer */}
+      <Sheet 
+        open={!!selectedJobForLogs} 
+        onOpenChange={(open) => !open && setSelectedJobForLogs(null)}
+      >
+        <SheetContent className="w-[500px] sm:w-[600px]">
+          <SheetHeader>
+            <SheetTitle>{selectedJobForLogs?.name} - Activity Logs</SheetTitle>
+            <SheetDescription>Recent activity for this job (last 100 entries)</SheetDescription>
+          </SheetHeader>
+          <ScrollArea className="h-[calc(100vh-140px)] mt-4">
+            {isLoadingLogs ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              </div>
+            ) : jobLogs.length === 0 ? (
+              <p className="text-center text-muted-foreground py-8">
+                No logs found for this job.
+              </p>
+            ) : (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead className="w-[80px]">Type</TableHead>
+                    <TableHead>Message</TableHead>
+                    <TableHead className="w-[100px]">Time</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {jobLogs.map((log) => (
+                    <TableRow key={log.id}>
+                      <TableCell>
+                        <Badge
+                          variant={getLogBadgeVariant(log.log_type) as "default" | "destructive" | "outline" | "secondary"}
+                          className={log.log_type === "success" ? "bg-green-500" : ""}
+                        >
+                          {log.log_type}
+                        </Badge>
+                      </TableCell>
+                      <TableCell>
+                        <p className="text-sm">{log.message}</p>
+                        {log.details && (
+                          <pre className="text-xs text-muted-foreground mt-1 max-w-[350px] overflow-x-auto">
+                            {JSON.stringify(log.details, null, 2)}
+                          </pre>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        <span className="text-xs text-muted-foreground">
+                          {formatDistanceToNow(new Date(log.created_at), { addSuffix: true })}
+                        </span>
+                      </TableCell>
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            )}
+          </ScrollArea>
+        </SheetContent>
+      </Sheet>
     </div>
   );
 }
