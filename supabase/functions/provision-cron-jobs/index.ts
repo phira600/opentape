@@ -11,6 +11,7 @@ interface CronJobDefinition {
   function_name: string
   body?: Record<string, string>
   description: string
+  config_id?: string  // Maps to cron_job_configurations.id for UI sync
 }
 
 // Each data source gets its own cron job for parallel execution
@@ -72,7 +73,8 @@ const CRON_JOBS: CronJobDefinition[] = [
     name: 'cleanup-old-trades-daily',
     schedule: '0 */4 * * *',
     function_name: 'cleanup-old-trades',
-    description: 'Cleans up old trades based on retention settings (every 4 hours)'
+    description: 'Cleans up old trades based on retention settings (every 4 hours)',
+    config_id: 'cleanup-old-trades'  // Maps to cron_job_configurations.id
   },
   {
     name: 'cboe-sis-symbology-daily',
@@ -135,6 +137,23 @@ Deno.serve(async (req) => {
         } else {
           console.log(`Successfully scheduled ${job.name}`)
           results.push({ name: job.name, status: 'created' })
+          
+          // Sync schedule to cron_job_configurations table for UI display
+          if (job.config_id) {
+            const { error: syncError } = await supabase
+              .from('cron_job_configurations')
+              .update({ 
+                schedule: job.schedule,
+                updated_at: new Date().toISOString()
+              })
+              .eq('id', job.config_id)
+            
+            if (syncError) {
+              console.log(`Note: Could not sync schedule to config table for ${job.config_id}: ${syncError.message}`)
+            } else {
+              console.log(`Synced schedule to config table for ${job.config_id}`)
+            }
+          }
         }
       } catch (jobError) {
         const errorMsg = jobError instanceof Error ? jobError.message : 'Unknown error'
