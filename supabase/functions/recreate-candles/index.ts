@@ -15,11 +15,8 @@ type JobStatus = 'idle' | 'running' | 'queued' | 'success' | 'failed'
 
 const JOB_ID = 'recreate-candles'
 
-// Dynamic batch sizing config
-const INITIAL_BATCH_SIZE = 10000
-const MIN_BATCH_SIZE = 1000
-const MAX_BATCH_SIZE = 50000
-const TARGET_BATCH_TIME_MS = 10000 // Target 10 seconds per batch
+// Supabase API has a hard limit of 1000 rows per request
+const BATCH_SIZE = 1000
 const CANDLE_UPSERT_BATCH = 500
 
 Deno.serve(async (req) => {
@@ -216,9 +213,8 @@ Deno.serve(async (req) => {
   }
 })
 
-// Process trades with dynamic batch sizing based on execution time
+// Process trades with fixed batch size (Supabase API limit is 1000 rows)
 async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, toDate: Date) {
-  let batchSize = INITIAL_BATCH_SIZE
   let offset = 0
   let totalTrades = 0
   let totalCandles = 0
@@ -239,20 +235,20 @@ async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, t
   while (true) {
     const batchStartTime = Date.now()
 
-    // Fetch trades batch
+    // Fetch trades batch - using range() for pagination with fixed 1000 batch size
     const { data: trades, error: tradesError } = await supabase
       .from('trades_normalized')
       .select('symbol, currency, trade_time, price, quantity')
       .gte('trade_time', fromDate.toISOString())
       .lte('trade_time', toDate.toISOString())
       .order('trade_time', { ascending: true })
-      .range(offset, offset + batchSize - 1)
-      .limit(batchSize)
+      .range(offset, offset + BATCH_SIZE - 1)
 
     if (tradesError) {
       throw new Error(`Failed to fetch trades: ${tradesError.message}`)
     }
 
+    // FIXED: Terminate when no rows returned, not when fewer than requested
     if (!trades || trades.length === 0) {
       console.log(`[Recreate Candles] No more trades at offset ${offset}`)
       break
@@ -289,30 +285,16 @@ async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, t
     const batchDuration = Date.now() - batchStartTime
     batchesProcessed++
 
-    console.log(`[Recreate Candles] Batch ${batchesProcessed}: ${fetchedCount} trades in ${batchDuration}ms (batch size: ${batchSize})`)
-
-    // Dynamic batch sizing based on execution time
-    if (batchDuration > TARGET_BATCH_TIME_MS * 2) {
-      // Too slow - reduce batch size
-      batchSize = Math.max(MIN_BATCH_SIZE, Math.floor(batchSize * 0.7))
-      console.log(`[Recreate Candles] Reducing batch size to ${batchSize}`)
-    } else if (batchDuration < TARGET_BATCH_TIME_MS * 0.5 && fetchedCount === batchSize) {
-      // Fast and full batch - increase batch size
-      batchSize = Math.min(MAX_BATCH_SIZE, Math.floor(batchSize * 1.3))
-      console.log(`[Recreate Candles] Increasing batch size to ${batchSize}`)
+    // Progress logging every 100 batches (100,000 trades)
+    if (batchesProcessed % 100 === 0) {
+      console.log(`[Recreate Candles] Progress: ${totalTrades} trades, ${allCandleMap.size} unique candles, batch ${batchesProcessed} (${batchDuration}ms)`)
     }
 
     offset += fetchedCount
 
-    // Check if we got less than requested (end of data)
-    if (fetchedCount < batchSize) {
-      console.log(`[Recreate Candles] Reached end of trades`)
-      break
-    }
-
-    // Safety limit
-    if (batchesProcessed >= 500) {
-      console.log(`[Recreate Candles] Reached batch limit (500)`)
+    // Safety limit - 10000 batches = 10 million trades max
+    if (batchesProcessed >= 10000) {
+      console.log(`[Recreate Candles] Reached safety batch limit (10000)`)
       break
     }
   }
