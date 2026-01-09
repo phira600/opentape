@@ -296,11 +296,11 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     setRunningCronId(cronJob.id);
 
     try {
-      // For recreate-candles, use the date range
+      // For recreate-candles, use the date range (YYYY-MM-DD format)
       const invokeBody = cronJob.id === "recreate-candles" && candleFromDate && candleToDate
         ? { 
-            from_date: candleFromDate.toISOString(),
-            to_date: candleToDate.toISOString()
+            from_date: candleFromDate.toISOString().split('T')[0],
+            to_date: candleToDate.toISOString().split('T')[0]
           }
         : {};
 
