@@ -231,7 +231,7 @@ Deno.serve(async (req) => {
 // Process incremental refresh for recently inserted trades
 // Finds trades by created_at (when inserted) and builds candles for their trade_time
 async function processIncremental(supabase: any, startTime: number) {
-  const MAX_GAP_HOURS = 4 // If gap > 4 hours, use smaller windows
+  const MAX_GAP_MINUTES = 30 // If gap > 30 minutes, use smaller windows
   
   // Get last refresh time from mv_refresh_log
   const { data: lastRefresh } = await supabase
@@ -246,16 +246,16 @@ async function processIncremental(supabase: any, startTime: number) {
   const lookbackMinutes = 2
   const createdSince = lastRefresh 
     ? new Date(new Date(lastRefresh.refreshed_at).getTime() - lookbackMinutes * 60 * 1000)
-    : new Date(Date.now() - 60 * 60 * 1000) // First run: last hour
+    : new Date(Date.now() - 15 * 60 * 1000) // First run: last 15 minutes
 
   console.log(`[Incremental] Finding trades created since ${createdSince.toISOString()}`)
 
   // Check if gap is too large
   const gapMs = Date.now() - createdSince.getTime()
-  const gapHours = gapMs / (60 * 60 * 1000)
+  const gapMinutes = gapMs / (60 * 1000)
   
-  if (gapHours > MAX_GAP_HOURS) {
-    console.log(`[Incremental] Gap too large (${gapHours.toFixed(1)}h), processing in 1-hour chunks`)
+  if (gapMinutes > MAX_GAP_MINUTES) {
+    console.log(`[Incremental] Gap too large (${gapMinutes.toFixed(1)} min), processing in 15-minute chunks`)
     return await processInChunks(supabase, createdSince, startTime)
   }
 
@@ -263,54 +263,56 @@ async function processIncremental(supabase: any, startTime: number) {
   return await processTrades(supabase, createdSince, startTime)
 }
 
-// Process trades in hour-by-hour chunks when gap is large
+// Process trades in 15-minute chunks when gap is large
 async function processInChunks(supabase: any, createdSince: Date, startTime: number) {
   let totalCandles = 0
   let totalTrades = 0
-  let hoursProcessed = 0
+  let chunksProcessed = 0
+  const CHUNK_SIZE_MS = 15 * 60 * 1000 // 15 minutes
   
   let windowStart = new Date(createdSince)
   const windowEnd = new Date()
   
   while (windowStart < windowEnd) {
-    const chunkEnd = new Date(Math.min(windowStart.getTime() + 60 * 60 * 1000, windowEnd.getTime()))
+    const chunkEnd = new Date(Math.min(windowStart.getTime() + CHUNK_SIZE_MS, windowEnd.getTime()))
     
-    console.log(`[Chunk] Processing ${windowStart.toISOString()} to ${chunkEnd.toISOString()}`)
+    console.log(`[Chunk ${chunksProcessed + 1}] Processing ${windowStart.toISOString()} to ${chunkEnd.toISOString()}`)
     
     const result = await processTradesForWindow(supabase, windowStart, chunkEnd)
     totalCandles += result.candleCount
     totalTrades += result.tradeCount
-    hoursProcessed++
+    chunksProcessed++
     
-    // Log progress every hour
-    if (hoursProcessed % 1 === 0 && result.tradeCount > 0) {
+    // Log progress every 4 chunks (1 hour)
+    if (chunksProcessed % 4 === 0 && totalTrades > 0) {
       await supabase.from('activity_logs').insert({
         log_type: 'info',
-        message: `Refresh candles: processed ${hoursProcessed} hours, ${totalCandles} candles, ${totalTrades} trades`,
-        details: { hours_processed: hoursProcessed, candles: totalCandles, trades: totalTrades }
+        message: `Refresh candles: ${chunksProcessed} chunks, ${totalCandles} candles, ${totalTrades} trades`,
+        details: { chunks_processed: chunksProcessed, candles: totalCandles, trades: totalTrades }
       })
     }
     
     windowStart = chunkEnd
   }
   
-  console.log(`[Chunks] Completed: ${hoursProcessed} hours, ${totalCandles} candles, ${totalTrades} trades`)
+  console.log(`[Chunks] Completed: ${chunksProcessed} chunks, ${totalCandles} candles, ${totalTrades} trades`)
   return { candleCount: totalCandles, tradeCount: totalTrades }
 }
 
 // Process trades for a specific time window
 async function processTradesForWindow(supabase: any, windowStart: Date, windowEnd: Date) {
-  const pageSize = 5000
+  const pageSize = 2000
   const trades: any[] = []
   let page = 0
 
   while (true) {
+    // Query by created_at range and order by created_at (uses index efficiently)
     const { data: tradesPage, error: tradesError } = await supabase
       .from('trades_normalized')
       .select('symbol, currency, trade_time, price, quantity')
       .gte('created_at', windowStart.toISOString())
       .lt('created_at', windowEnd.toISOString())
-      .order('trade_time', { ascending: true })
+      .order('created_at', { ascending: true })
       .range(page * pageSize, (page + 1) * pageSize - 1)
 
     if (tradesError) {
@@ -323,7 +325,7 @@ async function processTradesForWindow(supabase: any, windowStart: Date, windowEn
 
     if (!tradesPage || tradesPage.length < pageSize) break
     page++
-    if (page >= 20) break // hard stop at 100k trades per window
+    if (page >= 50) break // hard stop at 100k trades per window
   }
 
   if (trades.length === 0) {
@@ -333,9 +335,9 @@ async function processTradesForWindow(supabase: any, windowStart: Date, windowEn
   return aggregateAndUpsertCandles(supabase, trades)
 }
 
-// Normal processing for small gaps
+// Normal processing for small gaps (< 30 min)
 async function processTrades(supabase: any, createdSince: Date, startTime: number) {
-  const pageSize = 5000
+  const pageSize = 2000
   const trades: any[] = []
   let page = 0
 
@@ -344,7 +346,7 @@ async function processTrades(supabase: any, createdSince: Date, startTime: numbe
       .from('trades_normalized')
       .select('symbol, currency, trade_time, price, quantity')
       .gte('created_at', createdSince.toISOString())
-      .order('trade_time', { ascending: true })
+      .order('created_at', { ascending: true })
       .range(page * pageSize, (page + 1) * pageSize - 1)
 
     if (tradesError) {
@@ -357,7 +359,7 @@ async function processTrades(supabase: any, createdSince: Date, startTime: numbe
 
     if (!tradesPage || tradesPage.length < pageSize) break
     page++
-    if (page >= 50) break // hard stop at 250k trades
+    if (page >= 100) break // hard stop at 200k trades
   }
 
   console.log(`Found ${trades.length} recently created trades`)
