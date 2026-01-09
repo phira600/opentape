@@ -110,26 +110,14 @@ Deno.serve(async (req) => {
       })
       .eq('id', JOB_ID)
 
-    console.log(`[Recreate Candles] Starting backfill from ${body.from_date} to ${body.to_date}`)
+    console.log(`[Recreate Candles] Starting upsert backfill from ${body.from_date} to ${body.to_date}`)
 
     // Log start
     await supabase.from('activity_logs').insert({
       log_type: 'info',
-      message: `Starting candle backfill: ${body.from_date} to ${body.to_date}`,
+      message: `Starting candle upsert backfill: ${body.from_date} to ${body.to_date}`,
       details: { from_date: body.from_date, to_date: body.to_date }
     })
-
-    // Delete existing candles in the range
-    console.log('[Recreate Candles] Deleting existing candles in range...')
-    const { error: deleteError } = await supabase
-      .from('candles_1min')
-      .delete()
-      .gte('bucket', fromDate.toISOString())
-      .lte('bucket', toDate.toISOString())
-
-    if (deleteError) {
-      throw new Error(`Failed to delete existing candles: ${deleteError.message}`)
-    }
 
     // Process trades with dynamic batching
     const result = await processTradesWithDynamicBatching(supabase, fromDate, toDate)
