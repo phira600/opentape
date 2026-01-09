@@ -247,6 +247,7 @@ async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, t
       .lte('trade_time', toDate.toISOString())
       .order('trade_time', { ascending: true })
       .range(offset, offset + batchSize - 1)
+      .limit(batchSize)
 
     if (tradesError) {
       throw new Error(`Failed to fetch trades: ${tradesError.message}`)
