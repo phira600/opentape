@@ -213,15 +213,49 @@ Deno.serve(async (req) => {
   }
 })
 
-// Process trades with fixed batch size (Supabase API limit is 1000 rows)
+// Process trades hour-by-hour to avoid memory exhaustion
 async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, toDate: Date) {
-  let offset = 0
   let totalTrades = 0
   let totalCandles = 0
   let batchesProcessed = 0
 
-  // All candles accumulated across batches (for proper OHLCV aggregation)
-  const allCandleMap = new Map<string, {
+  // Process one hour at a time to limit memory usage
+  const hourStart = new Date(fromDate)
+  hourStart.setMinutes(0, 0, 0)
+
+  console.log(`[Recreate Candles] Processing trades from ${fromDate.toISOString()} to ${toDate.toISOString()}`)
+
+  while (hourStart < toDate) {
+    const hourEnd = new Date(hourStart)
+    hourEnd.setHours(hourEnd.getHours() + 1)
+
+    // Process this hour
+    const result = await processHour(supabase, hourStart, hourEnd > toDate ? toDate : hourEnd)
+    
+    totalTrades += result.tradeCount
+    totalCandles += result.candleCount
+    batchesProcessed += result.batchesProcessed
+
+    if (result.tradeCount > 0) {
+      console.log(`[Recreate Candles] Hour ${hourStart.toISOString()}: ${result.candleCount} candles from ${result.tradeCount} trades`)
+    }
+
+    hourStart.setHours(hourStart.getHours() + 1)
+  }
+
+  console.log(`[Recreate Candles] Total: ${totalCandles} candles from ${totalTrades} trades`)
+  return { candleCount: totalCandles, tradeCount: totalTrades, batchesProcessed }
+}
+
+// Process a single hour of trades
+async function processHour(supabase: any, hourStart: Date, hourEnd: Date) {
+  let offset = 0
+  let tradeCount = 0
+  let candleCount = 0
+  let batchesProcessed = 0
+
+  // Candles for this hour only
+  const candleMap = new Map<string, {
     symbol: string
     currency: string
     bucket: string
@@ -230,17 +264,12 @@ async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, t
     trade_count: number
   }>()
 
-  console.log(`[Recreate Candles] Processing trades from ${fromDate.toISOString()} to ${toDate.toISOString()}`)
-
   while (true) {
-    const batchStartTime = Date.now()
-
-    // Fetch trades batch - using range() for pagination with fixed 1000 batch size
     const { data: trades, error: tradesError } = await supabase
       .from('trades_normalized')
       .select('symbol, currency, trade_time, price, quantity')
-      .gte('trade_time', fromDate.toISOString())
-      .lte('trade_time', toDate.toISOString())
+      .gte('trade_time', hourStart.toISOString())
+      .lt('trade_time', hourEnd.toISOString())
       .order('trade_time', { ascending: true })
       .range(offset, offset + BATCH_SIZE - 1)
 
@@ -248,16 +277,13 @@ async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, t
       throw new Error(`Failed to fetch trades: ${tradesError.message}`)
     }
 
-    // FIXED: Terminate when no rows returned, not when fewer than requested
     if (!trades || trades.length === 0) {
-      console.log(`[Recreate Candles] No more trades at offset ${offset}`)
       break
     }
 
-    const fetchedCount = trades.length
-    totalTrades += fetchedCount
+    tradeCount += trades.length
+    batchesProcessed++
 
-    // Process trades into candle map
     for (const trade of trades) {
       const bucket = new Date(trade.trade_time)
       bucket.setSeconds(0, 0)
@@ -265,8 +291,8 @@ async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, t
       const currency = trade.currency || 'SEK'
       const key = `${trade.symbol}|${currency}|${bucketStr}`
 
-      if (!allCandleMap.has(key)) {
-        allCandleMap.set(key, {
+      if (!candleMap.has(key)) {
+        candleMap.set(key, {
           symbol: trade.symbol,
           currency,
           bucket: bucketStr,
@@ -276,66 +302,47 @@ async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, t
         })
       }
 
-      const candle = allCandleMap.get(key)!
+      const candle = candleMap.get(key)!
       candle.prices.push({ price: Number(trade.price), time: trade.trade_time })
       candle.volume += Number(trade.quantity)
       candle.trade_count++
     }
 
-    const batchDuration = Date.now() - batchStartTime
-    batchesProcessed++
+    offset += trades.length
+  }
 
-    // Progress logging every 100 batches (100,000 trades)
-    if (batchesProcessed % 100 === 0) {
-      console.log(`[Recreate Candles] Progress: ${totalTrades} trades, ${allCandleMap.size} unique candles, batch ${batchesProcessed} (${batchDuration}ms)`)
-    }
+  // Write candles for this hour immediately (frees memory)
+  if (candleMap.size > 0) {
+    const candles = Array.from(candleMap.values()).map(c => {
+      const sortedPrices = c.prices.sort((a, b) => a.time.localeCompare(b.time))
+      const prices = sortedPrices.map(p => p.price)
+      return {
+        symbol: c.symbol,
+        currency: c.currency,
+        bucket: c.bucket,
+        open: prices[0],
+        high: Math.max(...prices),
+        low: Math.min(...prices),
+        close: prices[prices.length - 1],
+        volume: c.volume,
+        trade_count: c.trade_count
+      }
+    })
 
-    offset += fetchedCount
+    for (let i = 0; i < candles.length; i += CANDLE_UPSERT_BATCH) {
+      const batch = candles.slice(i, i + CANDLE_UPSERT_BATCH)
+      const { error: upsertError } = await supabase
+        .from('candles_1min')
+        .upsert(batch, { onConflict: 'symbol,currency,bucket' })
 
-    // Safety limit - 10000 batches = 10 million trades max
-    if (batchesProcessed >= 10000) {
-      console.log(`[Recreate Candles] Reached safety batch limit (10000)`)
-      break
+      if (upsertError) {
+        throw new Error(`Failed to upsert candles: ${upsertError.message}`)
+      }
+      candleCount += batch.length
     }
   }
 
-  console.log(`[Recreate Candles] Processed ${totalTrades} trades into ${allCandleMap.size} candles`)
-
-  // Convert candle map to array and upsert
-  const candles = Array.from(allCandleMap.values()).map(c => {
-    const sortedPrices = c.prices.sort((a, b) => a.time.localeCompare(b.time))
-    const prices = sortedPrices.map(p => p.price)
-    return {
-      symbol: c.symbol,
-      currency: c.currency,
-      bucket: c.bucket,
-      open: prices[0],
-      high: Math.max(...prices),
-      low: Math.min(...prices),
-      close: prices[prices.length - 1],
-      volume: c.volume,
-      trade_count: c.trade_count
-    }
-  })
-
-  // Upsert candles in batches
-  for (let i = 0; i < candles.length; i += CANDLE_UPSERT_BATCH) {
-    const batch = candles.slice(i, i + CANDLE_UPSERT_BATCH)
-    const { error: upsertError } = await supabase
-      .from('candles_1min')
-      .upsert(batch, { onConflict: 'symbol,currency,bucket' })
-
-    if (upsertError) {
-      throw new Error(`Failed to upsert candles: ${upsertError.message}`)
-    }
-    totalCandles += batch.length
-
-    if ((i + CANDLE_UPSERT_BATCH) % 5000 === 0) {
-      console.log(`[Recreate Candles] Upserted ${totalCandles} candles...`)
-    }
-  }
-
-  return { candleCount: totalCandles, tradeCount: totalTrades, batchesProcessed }
+  return { candleCount, tradeCount, batchesProcessed }
 }
 
 // Update daily_stats for affected dates
