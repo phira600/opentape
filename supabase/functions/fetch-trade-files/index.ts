@@ -776,13 +776,22 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
   const files: FetchedFile[] = []
   
   try {
-    // Determine venue code from source URL
-    let venueCode = 'TRQX' // default
-    if (sourceUrl.includes('TurquoiseUK')) venueCode = 'TRQX'
-    else if (sourceUrl.includes('TurquoiseEurope')) venueCode = 'TQEX'
-    else if (sourceUrl.includes('LSE')) venueCode = 'XLON'
+    // Determine venue directory and file prefix from source URL
+    // Directory path uses market name, but file prefix uses MIC code
+    let venueDir = 'TRQX'  // directory name in URL path
+    let venueCode = 'TRQX' // prefix in filename
+    if (sourceUrl.includes('TurquoiseUK')) {
+      venueDir = 'TRQX'
+      venueCode = 'TRQX'
+    } else if (sourceUrl.includes('TurquoiseEurope')) {
+      venueDir = 'TQEX'
+      venueCode = 'TQEX'
+    } else if (sourceUrl.includes('LSE')) {
+      venueDir = 'LSE'    // Directory uses 'LSE'
+      venueCode = 'XLON'  // But filename uses 'XLON'
+    }
     
-    console.log(`LSEG: Using venue code ${venueCode}`)
+    console.log(`LSEG: Using venue directory ${venueDir}, file prefix ${venueCode}`)
     
     // Get already processed files for this job
     const { data: processedFiles } = await supabase
@@ -794,7 +803,8 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
     console.log(`LSEG: ${processedSet.size} files already processed`)
     
     const now = new Date()
-    const LSEG_FILE_BASE = 'https://dmd.lseg.com/'
+    // LSEG DMD files are at /dmd/download/posttrade/{VENUE_DIR}/FCA/
+    const LSEG_FILE_BASE = `https://dmd.lseg.com/dmd/download/posttrade/${venueDir}/FCA/`
     
     // LSEG uses UTC times for file names
     const todayStr = now.toISOString().split('T')[0]
@@ -809,7 +819,8 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
     const marketClose = 17
     
     for (let h = marketOpen; h <= Math.min(currentHour, marketClose); h++) {
-      const maxMin = (h === currentHour) ? Math.max(0, currentMinute - 2) : 59
+      // LSEG data is delayed by 15 minutes, so don't try files from last 16 minutes
+      const maxMin = (h === currentHour) ? Math.max(0, currentMinute - 16) : 59
       
       for (let m = 0; m <= maxMin; m++) {
         const hourStr = h.toString().padStart(2, '0')
@@ -837,6 +848,9 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
     }
     
     console.log(`LSEG ${venueCode}: Trying ${urlsToTry.length} URLs`)
+    if (urlsToTry.length > 0) {
+      console.log(`LSEG: First URL attempt: ${urlsToTry[0].url}`)
+    }
     
     // Fetch files in batches of 5
     for (let i = 0; i < urlsToTry.length; i += 5) {
