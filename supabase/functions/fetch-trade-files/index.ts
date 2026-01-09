@@ -777,22 +777,14 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
   const files: FetchedFile[] = []
   
   try {
-    // Determine venue directory and file prefix from source URL
-    // Directory path uses market name, but file prefix uses MIC code
-    let venueDir = 'TRQX'  // directory name in URL path
-    let venueCode = 'TRQX' // prefix in filename
-    if (sourceUrl.includes('TurquoiseUK')) {
-      venueDir = 'TRQX'
-      venueCode = 'TRQX'
-    } else if (sourceUrl.includes('TurquoiseEurope')) {
-      venueDir = 'TQEX'
-      venueCode = 'TQEX'
-    } else if (sourceUrl.includes('LSE')) {
-      venueDir = 'LSE'    // Directory uses 'LSE'
-      venueCode = 'XLON'  // But filename uses 'XLON'
-    }
+    // Determine venue code (MIC) for filename from source URL
+    // Files are served directly from root: https://dmd.lseg.com/XXXX-post-...
+    let venueCode = 'TRQX'
+    if (sourceUrl.includes('TurquoiseUK')) venueCode = 'TRQX'
+    else if (sourceUrl.includes('TurquoiseEurope')) venueCode = 'TQEX'
+    else if (sourceUrl.includes('LSE')) venueCode = 'XLON'
     
-    console.log(`LSEG: Using venue directory ${venueDir}, file prefix ${venueCode}`)
+    console.log(`LSEG: Using venue code ${venueCode}`)
     
     // Get already processed files for this job
     const { data: processedFiles } = await supabase
@@ -804,8 +796,8 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
     console.log(`LSEG: ${processedSet.size} files already processed`)
     
     const now = new Date()
-    // LSEG DMD files are at /dmd/download/posttrade/{VENUE_DIR}/FCA/
-    const LSEG_FILE_BASE = `https://dmd.lseg.com/dmd/download/posttrade/${venueDir}/FCA/`
+    // LSEG files are served directly from root
+    const LSEG_FILE_BASE = 'https://dmd.lseg.com/'
     
     // LSEG uses UTC times for file names
     const todayStr = now.toISOString().split('T')[0]
@@ -856,6 +848,12 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
     // Fetch files in batches of 5
     for (let i = 0; i < urlsToTry.length; i += 5) {
       const batch = urlsToTry.slice(i, i + 5)
+      
+      // Log first URL of each batch for debugging
+      if (i === 0) {
+        console.log(`LSEG: Trying first URL: ${batch[0]?.url}`)
+      }
+      
       const results = await Promise.allSettled(
         batch.map(async ({ url, fileName }) => {
           try {
@@ -865,6 +863,11 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
                 'Accept': 'text/csv,application/gzip,*/*',
               }
             })
+            
+            // Log response status for first few attempts
+            if (i === 0) {
+              console.log(`LSEG: ${fileName} -> HTTP ${response.status}`)
+            }
             
             if (response.ok) {
               // Handle gzip files
@@ -884,7 +887,10 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
               }
             }
           } catch (e) {
-            // Silently ignore - file may not exist
+            // Log first error only
+            if (i === 0) {
+              console.log(`LSEG: Error fetching ${fileName}: ${e}`)
+            }
           }
           return null
         })
