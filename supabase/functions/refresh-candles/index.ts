@@ -43,29 +43,57 @@ Deno.serve(async (req) => {
     }
 
     const currentStatus = cronConfig?.last_status as JobStatus || 'idle'
+    const STALE_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutes
+
+    // Helper to check if job status is stale (stuck for too long)
+    const isStatusStale = async (): Promise<boolean> => {
+      const { data: statusCheck } = await supabase
+        .from('cron_job_configurations')
+        .select('updated_at')
+        .eq('id', JOB_ID)
+        .single()
+      
+      if (!statusCheck?.updated_at) return true
+      
+      const lastUpdate = new Date(statusCheck.updated_at)
+      const threshold = new Date(Date.now() - STALE_THRESHOLD_MS)
+      return lastUpdate < threshold
+    }
 
     // Concurrency control based on status
     if (currentStatus === 'running') {
-      // Already running - set to queued and return
-      await supabase
-        .from('cron_job_configurations')
-        .update({ last_status: 'queued' })
-        .eq('id', JOB_ID)
-      
-      console.log('Job already running, queued for next run')
-      return new Response(
-        JSON.stringify({ success: true, queued: true, message: 'Job already running, queued for next run' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      // Check if this is a stale running status (job crashed)
+      if (await isStatusStale()) {
+        console.log('[Refresh Candles] Recovering from stale running status (job crashed)')
+        // Continue with processing - will set to running below
+      } else {
+        // Recently started - queue this request
+        await supabase
+          .from('cron_job_configurations')
+          .update({ last_status: 'queued', updated_at: new Date().toISOString() })
+          .eq('id', JOB_ID)
+        
+        console.log('Job already running, queued for next run')
+        return new Response(
+          JSON.stringify({ success: true, queued: true, message: 'Job already running, queued for next run' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
     }
 
     if (currentStatus === 'queued') {
-      // Already queued - skip (only one in queue)
-      console.log('Job already queued, skipping')
-      return new Response(
-        JSON.stringify({ success: true, skipped: true, reason: 'already_queued' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      // Check if this is a stale queued status (deadlock)
+      if (await isStatusStale()) {
+        console.log('[Refresh Candles] Recovering from stale queued status (deadlock)')
+        // Continue with processing - will set to running below
+      } else {
+        // Recently queued - skip (only one in queue)
+        console.log('Job already queued, skipping')
+        return new Response(
+          JSON.stringify({ success: true, skipped: true, reason: 'already_queued' }),
+          { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
     }
 
     // Status is idle/success/failed - proceed with processing
