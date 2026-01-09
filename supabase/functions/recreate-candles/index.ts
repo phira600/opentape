@@ -18,6 +18,7 @@ const JOB_ID = 'recreate-candles'
 // Supabase API has a hard limit of 1000 rows per request
 const BATCH_SIZE = 1000
 const CANDLE_UPSERT_BATCH = 500
+const STALE_THRESHOLD_MS = 10 * 60 * 1000 // 10 minutes
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -68,16 +69,15 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Check current job status
+    // Check current job status with stale recovery
     const { data: cronConfig, error: configError } = await supabase
       .from('cron_job_configurations')
-      .select('is_enabled, last_status')
+      .select('is_enabled, last_status, last_run_at')
       .eq('id', JOB_ID)
       .single()
 
     if (configError) {
       console.error(`Failed to fetch job config: ${configError.message}`)
-      // Continue anyway - job config might not exist yet
     }
 
     // Check if job is enabled
@@ -90,14 +90,27 @@ Deno.serve(async (req) => {
     }
 
     const currentStatus = cronConfig?.last_status as JobStatus || 'idle'
+    const lastRunAt = cronConfig?.last_run_at ? new Date(cronConfig.last_run_at).getTime() : 0
 
-    // Check if already running
+    // Check if already running - with stale recovery
     if (currentStatus === 'running') {
-      console.log('Recreate candles job already running')
-      return new Response(
-        JSON.stringify({ success: false, error: 'Job already running. Please wait for completion.' }),
-        { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      const elapsed = Date.now() - lastRunAt
+      
+      if (elapsed < STALE_THRESHOLD_MS) {
+        console.log('Recreate candles job already running')
+        return new Response(
+          JSON.stringify({ success: false, error: 'Job already running. Please wait for completion.' }),
+          { status: 409, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+        )
+      }
+      
+      // Stale running job - recover it
+      console.log(`[Recreate Candles] Recovering stale running job (elapsed: ${Math.round(elapsed/1000)}s)`)
+      await supabase.from('activity_logs').insert({
+        log_type: 'warning',
+        message: `Recovered stale recreate-candles job (was running for ${Math.round(elapsed/1000)}s)`,
+        details: { elapsed_ms: elapsed }
+      })
     }
 
     // Set status to running
@@ -110,17 +123,17 @@ Deno.serve(async (req) => {
       })
       .eq('id', JOB_ID)
 
-    console.log(`[Recreate Candles] Starting upsert backfill from ${body.from_date} to ${body.to_date}`)
+    console.log(`[Recreate Candles] Starting optimized backfill from ${body.from_date} to ${body.to_date}`)
 
     // Log start
     await supabase.from('activity_logs').insert({
       log_type: 'info',
-      message: `Starting candle upsert backfill: ${body.from_date} to ${body.to_date}`,
+      message: `Starting candle backfill: ${body.from_date} to ${body.to_date}`,
       details: { from_date: body.from_date, to_date: body.to_date }
     })
 
-    // Process trades with dynamic batching
-    const result = await processTradesWithDynamicBatching(supabase, fromDate, toDate)
+    // Process trades with optimized O(1) aggregation
+    const result = await processTradesOptimized(supabase, fromDate, toDate)
 
     // Update daily_stats for affected dates
     await updateDailyStats(supabase, fromDate, toDate)
@@ -146,7 +159,7 @@ Deno.serve(async (req) => {
 
     // Log completion
     await supabase.from('activity_logs').insert({
-      log_type: 'info',
+      log_type: 'success',
       message: `Candle backfill complete: ${result.candleCount} candles from ${result.tradeCount} trades in ${Math.round(duration/1000)}s`,
       details: { 
         from_date: body.from_date, 
@@ -154,7 +167,7 @@ Deno.serve(async (req) => {
         candle_count: result.candleCount,
         trade_count: result.tradeCount,
         duration_ms: duration,
-        batches_processed: result.batchesProcessed
+        hours_processed: result.hoursProcessed
       }
     })
 
@@ -168,7 +181,7 @@ Deno.serve(async (req) => {
         duration_ms: duration,
         rows_count: result.candleCount,
         trade_count: result.tradeCount,
-        batches_processed: result.batchesProcessed,
+        hours_processed: result.hoursProcessed,
         message: `Backfill complete: ${result.candleCount} candles from ${result.tradeCount} trades`
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
@@ -201,13 +214,12 @@ Deno.serve(async (req) => {
   }
 })
 
-// Process trades hour-by-hour to avoid memory exhaustion
-async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, toDate: Date) {
+// Optimized O(1) per-trade aggregation - no arrays, no sorting, no Math.max spread
+async function processTradesOptimized(supabase: any, fromDate: Date, toDate: Date) {
   let totalTrades = 0
   let totalCandles = 0
-  let batchesProcessed = 0
+  let hoursProcessed = 0
 
-  // Process one hour at a time to limit memory usage
   const hourStart = new Date(fromDate)
   hourStart.setMinutes(0, 0, 0)
 
@@ -217,39 +229,43 @@ async function processTradesWithDynamicBatching(supabase: any, fromDate: Date, t
     const hourEnd = new Date(hourStart)
     hourEnd.setHours(hourEnd.getHours() + 1)
 
-    // Process this hour
-    const result = await processHour(supabase, hourStart, hourEnd > toDate ? toDate : hourEnd)
+    const result = await processHourOptimized(supabase, hourStart, hourEnd > toDate ? toDate : hourEnd)
     
     totalTrades += result.tradeCount
     totalCandles += result.candleCount
-    batchesProcessed += result.batchesProcessed
+    hoursProcessed++
 
-    if (result.tradeCount > 0) {
-      console.log(`[Recreate Candles] Hour ${hourStart.toISOString()}: ${result.candleCount} candles from ${result.tradeCount} trades`)
+    // Progress logging every 10 hours
+    if (hoursProcessed % 10 === 0 || result.tradeCount > 0) {
+      const elapsed = Math.round((Date.now() - hourStart.getTime()) / 1000)
+      console.log(`[Recreate Candles] Progress: ${hoursProcessed} hours, ${totalCandles} candles, ${totalTrades} trades`)
     }
 
     hourStart.setHours(hourStart.getHours() + 1)
   }
 
-  console.log(`[Recreate Candles] Total: ${totalCandles} candles from ${totalTrades} trades`)
-  return { candleCount: totalCandles, tradeCount: totalTrades, batchesProcessed }
+  console.log(`[Recreate Candles] Total: ${totalCandles} candles from ${totalTrades} trades in ${hoursProcessed} hours`)
+  return { candleCount: totalCandles, tradeCount: totalTrades, hoursProcessed }
 }
 
-// Process a single hour of trades
-async function processHour(supabase: any, hourStart: Date, hourEnd: Date) {
+// Optimized hour processing with O(1) aggregation per trade
+async function processHourOptimized(supabase: any, hourStart: Date, hourEnd: Date) {
   let offset = 0
   let tradeCount = 0
   let candleCount = 0
-  let batchesProcessed = 0
 
-  // Candles for this hour only
+  // Candle map with O(1) updates - no price arrays
   const candleMap = new Map<string, {
     symbol: string
     currency: string
     bucket: string
-    prices: { price: number, time: string }[]
+    open: number
+    high: number
+    low: number
+    close: number
     volume: number
     trade_count: number
+    first_time: string  // Track first trade time for open price
   }>()
 
   while (true) {
@@ -270,7 +286,6 @@ async function processHour(supabase: any, hourStart: Date, hourEnd: Date) {
     }
 
     tradeCount += trades.length
-    batchesProcessed++
 
     for (const trade of trades) {
       const bucket = new Date(trade.trade_time)
@@ -278,44 +293,55 @@ async function processHour(supabase: any, hourStart: Date, hourEnd: Date) {
       const bucketStr = bucket.toISOString()
       const currency = trade.currency || 'SEK'
       const key = `${trade.symbol}|${currency}|${bucketStr}`
+      const price = Number(trade.price)
+      const quantity = Number(trade.quantity)
 
-      if (!candleMap.has(key)) {
+      const existing = candleMap.get(key)
+      
+      if (!existing) {
+        // First trade for this candle - initialize all values
         candleMap.set(key, {
           symbol: trade.symbol,
           currency,
           bucket: bucketStr,
-          prices: [],
-          volume: 0,
-          trade_count: 0
+          open: price,
+          high: price,
+          low: price,
+          close: price,
+          volume: quantity,
+          trade_count: 1,
+          first_time: trade.trade_time
         })
+      } else {
+        // O(1) update - simple comparisons, no arrays
+        if (trade.trade_time < existing.first_time) {
+          existing.open = price
+          existing.first_time = trade.trade_time
+        }
+        if (price > existing.high) existing.high = price
+        if (price < existing.low) existing.low = price
+        existing.close = price  // Last trade becomes close
+        existing.volume += quantity
+        existing.trade_count++
       }
-
-      const candle = candleMap.get(key)!
-      candle.prices.push({ price: Number(trade.price), time: trade.trade_time })
-      candle.volume += Number(trade.quantity)
-      candle.trade_count++
     }
 
     offset += trades.length
   }
 
-  // Write candles for this hour immediately (frees memory)
+  // Write candles for this hour
   if (candleMap.size > 0) {
-    const candles = Array.from(candleMap.values()).map(c => {
-      const sortedPrices = c.prices.sort((a, b) => a.time.localeCompare(b.time))
-      const prices = sortedPrices.map(p => p.price)
-      return {
-        symbol: c.symbol,
-        currency: c.currency,
-        bucket: c.bucket,
-        open: prices[0],
-        high: Math.max(...prices),
-        low: Math.min(...prices),
-        close: prices[prices.length - 1],
-        volume: c.volume,
-        trade_count: c.trade_count
-      }
-    })
+    const candles = Array.from(candleMap.values()).map(c => ({
+      symbol: c.symbol,
+      currency: c.currency,
+      bucket: c.bucket,
+      open: c.open,
+      high: c.high,
+      low: c.low,
+      close: c.close,
+      volume: c.volume,
+      trade_count: c.trade_count
+    }))
 
     for (let i = 0; i < candles.length; i += CANDLE_UPSERT_BATCH) {
       const batch = candles.slice(i, i + CANDLE_UPSERT_BATCH)
@@ -330,7 +356,7 @@ async function processHour(supabase: any, hourStart: Date, hourEnd: Date) {
     }
   }
 
-  return { candleCount, tradeCount, batchesProcessed }
+  return { candleCount, tradeCount }
 }
 
 // Update daily_stats for affected dates
