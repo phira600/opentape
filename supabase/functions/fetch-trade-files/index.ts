@@ -768,7 +768,7 @@ function parseNasdaqDataWithStats(rawData: string, jobName: string): { trades: T
   return { trades, totalLines: 0, filteredCount }
 }
 
-// LSEG DMD: Scrape HTML page for file links, download CSV/GZ files
+// LSEG DMD: Generate URLs programmatically (site is an Angular SPA, HTML scraping doesn't work)
 // File patterns:
 //   End-of-day: XXXX-post-YYYY-MM-DD.csv.gz (consolidated, priority)
 //   Intraday: XXXX-post-YYYY-MM-DDTHH_MM.csv
@@ -776,6 +776,14 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
   const files: FetchedFile[] = []
   
   try {
+    // Determine venue code from source URL
+    let venueCode = 'TRQX' // default
+    if (sourceUrl.includes('TurquoiseUK')) venueCode = 'TRQX'
+    else if (sourceUrl.includes('TurquoiseEurope')) venueCode = 'TQEX'
+    else if (sourceUrl.includes('LSE')) venueCode = 'XLON'
+    
+    console.log(`LSEG: Using venue code ${venueCode}`)
+    
     // Get already processed files for this job
     const { data: processedFiles } = await supabase
       .from('processed_files')
@@ -785,181 +793,141 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
     const processedSet = new Set((processedFiles || []).map((f: { file_name: string }) => f.file_name))
     console.log(`LSEG: ${processedSet.size} files already processed`)
     
-    // Fetch the HTML page
-    const response = await fetch(sourceUrl, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      }
-    })
-    
-    if (!response.ok) {
-      throw new Error(`Failed to fetch LSEG page: ${response.status}`)
-    }
-    
-    const html = await response.text()
-    console.log(`LSEG: Fetched HTML page, length=${html.length} chars`)
-    
-    // Log a sample of the HTML for debugging
-    console.log(`LSEG: HTML sample (first 500 chars): ${html.substring(0, 500).replace(/\n/g, ' ')}`)
-    
-    // Extract file links from HTML using multiple regex patterns
-    // Pattern 1: href="..." with .csv or .csv.gz files
-    const linkRegex1 = /href\s*=\s*["']([^"']*\.csv(?:\.gz)?)["']/gi
-    // Pattern 2: href=... without quotes (some HTML pages)
-    const linkRegex2 = /href\s*=\s*([^\s>"']+\.csv(?:\.gz)?)/gi
-    // Pattern 3: Look for any URL containing .csv
-    const linkRegex3 = /["'](https?:\/\/[^"'\s]*\.csv(?:\.gz)?)["']/gi
-    
-    const allMatches: string[] = []
-    
-    // Try all patterns
-    for (const match of html.matchAll(linkRegex1)) {
-      allMatches.push(match[1])
-    }
-    for (const match of html.matchAll(linkRegex2)) {
-      if (!allMatches.includes(match[1])) {
-        allMatches.push(match[1])
-      }
-    }
-    for (const match of html.matchAll(linkRegex3)) {
-      if (!allMatches.includes(match[1])) {
-        allMatches.push(match[1])
-      }
-    }
-    
-    console.log(`LSEG: Found ${allMatches.length} file links in HTML`)
-    if (allMatches.length === 0) {
-      // Log more HTML for debugging when no matches found
-      console.log(`LSEG: Full HTML (first 2000 chars): ${html.substring(0, 2000).replace(/\n/g, ' ')}`)
-      console.log(`LSEG: Looking for any anchor tags...`)
-      const anchorMatches = html.match(/<a[^>]*>/gi) || []
-      console.log(`LSEG: Found ${anchorMatches.length} anchor tags, first 5: ${anchorMatches.slice(0, 5).join(', ')}`)
-    } else {
-      console.log(`LSEG: Sample matches: ${allMatches.slice(0, 5).join(', ')}`)
-    }
-    
-    // Group files by date
-    // End-of-day pattern: XXXX-post-YYYY-MM-DD.csv.gz
-    // Intraday pattern: XXXX-post-YYYY-MM-DDTHH_MM.csv
-    const filesByDate: Map<string, { gzFile?: string; csvFiles: string[] }> = new Map()
-    
-    for (const href of allMatches) {
-      // Extract just the filename from the href
-      const fileName = href.split('/').pop() || href
-      
-      // Match end-of-day: XXXX-post-YYYY-MM-DD.csv.gz
-      const gzMatch = fileName.match(/^([A-Z]{4})-post-(\d{4}-\d{2}-\d{2})\.csv\.gz$/)
-      if (gzMatch) {
-        const date = gzMatch[2]
-        if (!filesByDate.has(date)) {
-          filesByDate.set(date, { csvFiles: [] })
-        }
-        filesByDate.get(date)!.gzFile = fileName
-        continue
-      }
-      
-      // Match intraday: XXXX-post-YYYY-MM-DDTHH_MM.csv
-      const csvMatch = fileName.match(/^([A-Z]{4})-post-(\d{4}-\d{2}-\d{2})T\d{2}_\d{2}\.csv$/)
-      if (csvMatch) {
-        const date = csvMatch[2]
-        if (!filesByDate.has(date)) {
-          filesByDate.set(date, { csvFiles: [] })
-        }
-        filesByDate.get(date)!.csvFiles.push(fileName)
-      }
-    }
-    
-  console.log(`LSEG: Found files for ${filesByDate.size} dates`)
-    
-    // LSEG files are hosted at dmd.lseg.com root, not under /dmd/
+    const now = new Date()
     const LSEG_FILE_BASE = 'https://dmd.lseg.com/'
     
-    // Get today's date in YYYY-MM-DD format
-    const today = new Date().toISOString().split('T')[0]
+    // LSEG uses UTC times for file names
+    const todayStr = now.toISOString().split('T')[0]
+    const currentHour = now.getUTCHours()
+    const currentMinute = now.getUTCMinutes()
     
-    // Process each date
-    for (const [date, dateFiles] of filesByDate) {
-      const isToday = date === today
+    // Generate intraday file URLs for today (07:00 to current time - 2 minutes)
+    const urlsToTry: { url: string; fileName: string }[] = []
+    
+    // Market hours: approximately 07:00-17:00 UTC
+    const marketOpen = 7
+    const marketClose = 17
+    
+    for (let h = marketOpen; h <= Math.min(currentHour, marketClose); h++) {
+      const maxMin = (h === currentHour) ? Math.max(0, currentMinute - 2) : 59
       
-      if (isToday) {
-        // Current day: always use intraday CSV files (gz may be incomplete)
-        console.log(`LSEG: Processing today (${date}) - using intraday files only`)
-        for (const csvFile of dateFiles.csvFiles) {
-          if (processedSet.has(csvFile)) continue
-          
-          // Use fixed base URL since files are at dmd.lseg.com root
-          const fileUrl = `${LSEG_FILE_BASE}${csvFile}`
-          
-          try {
-            console.log(`LSEG: Downloading intraday file ${csvFile}`)
-            const csvResponse = await fetch(fileUrl, {
-              headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/csv,*/*',
-              }
-            })
-            if (csvResponse.ok) {
-              const data = await csvResponse.text()
-              if (data && data.length > 100) {
-                files.push({ data, url: fileUrl, fileName: csvFile })
-              }
-            } else {
-              console.log(`LSEG: Failed to fetch ${csvFile}: ${csvResponse.status}`)
-            }
-          } catch (e) {
-            console.error(`LSEG: Failed to download ${csvFile}: ${e}`)
-          }
-          
-          // Small delay to avoid rate limiting
-          await new Promise(r => setTimeout(r, 100))
-        }
-      } else {
-        // Past dates: prefer gz file if available and not processed
-        if (dateFiles.gzFile && !processedSet.has(dateFiles.gzFile)) {
-          const fileUrl = `${LSEG_FILE_BASE}${dateFiles.gzFile}`
-          
-          console.log(`LSEG: Downloading end-of-day file ${dateFiles.gzFile}`)
-          const fileData = await fetchAndDecompressGz(fileUrl)
-          if (fileData) {
-            files.push({ data: fileData, url: fileUrl, fileName: dateFiles.gzFile })
-          }
-        } else if (!dateFiles.gzFile) {
-          // No gz file for past date, download individual CSVs
-          for (const csvFile of dateFiles.csvFiles) {
-            if (processedSet.has(csvFile)) continue
-            
-            const fileUrl = `${LSEG_FILE_BASE}${csvFile}`
-            
-            try {
-              const csvResponse = await fetch(fileUrl, {
-                headers: {
-                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                  'Accept': 'text/csv,*/*',
-                }
-              })
-              if (csvResponse.ok) {
-                const data = await csvResponse.text()
-                if (data && data.length > 100) {
-                  files.push({ data, url: fileUrl, fileName: csvFile })
-                }
-              }
-            } catch (e) {
-              console.error(`LSEG: Failed to download ${csvFile}: ${e}`)
-            }
-            
-            await new Promise(r => setTimeout(r, 100))
-          }
-        }
+      for (let m = 0; m <= maxMin; m++) {
+        const hourStr = h.toString().padStart(2, '0')
+        const minStr = m.toString().padStart(2, '0')
+        const fileName = `${venueCode}-post-${todayStr}T${hourStr}_${minStr}.csv`
+        
+        // Skip already processed
+        if (processedSet.has(fileName)) continue
+        
+        const url = `${LSEG_FILE_BASE}${fileName}`
+        urlsToTry.push({ url, fileName })
       }
     }
     
-    console.log(`LSEG: Downloaded ${files.length} new files`)
+    // Also try yesterday's end-of-day consolidated file
+    const yesterday = new Date(now.getTime() - 24 * 60 * 60 * 1000)
+    const yesterdayStr = yesterday.toISOString().split('T')[0]
+    const eodFileName = `${venueCode}-post-${yesterdayStr}.csv.gz`
+    
+    if (!processedSet.has(eodFileName)) {
+      urlsToTry.push({
+        url: `${LSEG_FILE_BASE}${eodFileName}`,
+        fileName: eodFileName
+      })
+    }
+    
+    console.log(`LSEG ${venueCode}: Trying ${urlsToTry.length} URLs`)
+    
+    // Fetch files in batches of 5
+    for (let i = 0; i < urlsToTry.length; i += 5) {
+      const batch = urlsToTry.slice(i, i + 5)
+      const results = await Promise.allSettled(
+        batch.map(async ({ url, fileName }) => {
+          try {
+            const response = await fetch(url, {
+              headers: {
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                'Accept': 'text/csv,application/gzip,*/*',
+              }
+            })
+            
+            if (response.ok) {
+              // Handle gzip files
+              if (fileName.endsWith('.gz')) {
+                const buffer = await response.arrayBuffer()
+                const decompressed = await decompressGzip(new Uint8Array(buffer))
+                if (decompressed && decompressed.length > 100) {
+                  console.log(`LSEG: Found ${fileName} (${decompressed.split('\n').length} lines)`)
+                  return { data: decompressed, url, fileName }
+                }
+              } else {
+                const data = await response.text()
+                if (data && data.length > 100 && !data.includes('<!DOCTYPE')) {
+                  console.log(`LSEG: Found ${fileName} (${data.split('\n').length} lines)`)
+                  return { data, url, fileName }
+                }
+              }
+            }
+          } catch (e) {
+            // Silently ignore - file may not exist
+          }
+          return null
+        })
+      )
+      
+      for (const result of results) {
+        if (result.status === 'fulfilled' && result.value) {
+          files.push(result.value)
+        }
+      }
+      
+      // Small delay between batches
+      if (i + 5 < urlsToTry.length) {
+        await new Promise(r => setTimeout(r, 200))
+      }
+    }
+    
+    console.log(`LSEG: Downloaded ${files.length} files`)
   } catch (e) {
     console.error(`LSEG fetch error: ${e}`)
   }
   
   return files
+}
+
+// Helper to decompress gzip data
+async function decompressGzip(compressedData: Uint8Array): Promise<string> {
+  try {
+    const stream = new DecompressionStream('gzip')
+    const readable = new ReadableStream({
+      start(controller) {
+        controller.enqueue(compressedData)
+        controller.close()
+      }
+    }).pipeThrough(stream)
+    
+    const reader = readable.getReader()
+    const chunks: Uint8Array[] = []
+    
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) chunks.push(value)
+    }
+    
+    const totalLength = chunks.reduce((sum, chunk) => sum + chunk.length, 0)
+    const result = new Uint8Array(totalLength)
+    let offset = 0
+    for (const chunk of chunks) {
+      result.set(chunk, offset)
+      offset += chunk.length
+    }
+    
+    return new TextDecoder().decode(result)
+  } catch (e) {
+    console.error('Gzip decompression failed:', e)
+    return ''
+  }
 }
 
 // Helper to fetch and decompress gzipped files
