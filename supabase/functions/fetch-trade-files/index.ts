@@ -142,6 +142,7 @@ Deno.serve(async (req) => {
             job_id: job.id,
             log_type: 'info',
             message: 'No new files available',
+            details: { reason: 'No matching files found or all files already processed' }
           })
           
           await supabase
@@ -155,6 +156,9 @@ Deno.serve(async (req) => {
 
         let totalInserted = 0
         let filesProcessed = 0
+        let emptyFilesCount = 0
+        let filteredTradesCount = 0
+        const processedFileDetails: { name: string; lines: number; trades: number; filtered: number }[] = []
 
         for (const file of files) {
           const rawData = file.data
@@ -182,22 +186,33 @@ Deno.serve(async (req) => {
 
           // Parse trades based on source type
           const contentType = ''
-          let trades: TradeRecord[] = []
+          let parseResult: { trades: TradeRecord[]; totalLines: number; filteredCount: number } = { trades: [], totalLines: 0, filteredCount: 0 }
           
           if (job.source_type === 'cboe' || job.source_type === 'cboe_bxe' || job.source_type === 'cboe_cxe' || job.source_type === 'cboe_dxe') {
-            trades = parseCboeData(rawData, job.name)
+            parseResult = parseCboeDataWithStats(rawData, job.name)
           } else if (job.source_type === 'nasdaq') {
-            trades = parseNasdaqData(rawData, job.name)
+            parseResult = parseNasdaqDataWithStats(rawData, job.name)
           } else if (job.source_type === 'lseg') {
-            trades = parseLsegData(rawData, contentType, job.name)
+            parseResult.trades = parseLsegData(rawData, contentType, job.name)
           } else if (job.source_type === 'lseg_trqx' || job.source_type === 'lseg_tqex' || job.source_type === 'lseg_xlon') {
-            trades = parseLsegPostTradeData(rawData, job.name)
+            parseResult = parseLsegPostTradeDataWithStats(rawData, job.name)
           } else {
-            trades = parseGenericData(rawData, contentType, job.name)
+            parseResult.trades = parseGenericData(rawData, contentType, job.name)
           }
 
+          const trades = parseResult.trades
+          filteredTradesCount += parseResult.filteredCount
+
           if (trades.length === 0) {
-            console.log(`No trades in file: ${fileName}`)
+            // Track if file had data lines but no valid trades
+            if (parseResult.totalLines > 1) {
+              console.log(`File ${fileName}: ${parseResult.totalLines} data lines, but 0 valid trades (${parseResult.filteredCount} filtered)`)
+              emptyFilesCount++
+              processedFileDetails.push({ name: fileName, lines: parseResult.totalLines, trades: 0, filtered: parseResult.filteredCount })
+            } else {
+              console.log(`File ${fileName}: empty or header-only`)
+              emptyFilesCount++
+            }
             continue
           }
 
@@ -232,21 +247,30 @@ Deno.serve(async (req) => {
 
           totalInserted += insertedCount
           filesProcessed++
+          processedFileDetails.push({ name: fileName, lines: parseResult.totalLines, trades: insertedCount, filtered: 0 })
           console.log(`Processed file ${fileName}: ${insertedCount} trades`)
         }
 
         // Collect processed filenames for logging
-        const processedFileNames = files.filter((_, i) => i < filesProcessed).map(f => f.fileName).slice(0, 10)
-        const fileListSummary = processedFileNames.length > 0 
-          ? `Files: ${processedFileNames.join(', ')}${filesProcessed > 10 ? ` (+${filesProcessed - 10} more)` : ''}`
-          : ''
+        const processedFileNames = processedFileDetails.filter(f => f.trades > 0).map(f => f.name).slice(0, 10)
 
-        // Log success
+        // Log success with detailed breakdown
+        const logMessage = emptyFilesCount > 0
+          ? `Processed ${filesProcessed} files with ${totalInserted} trades (${emptyFilesCount} files had no valid trades)`
+          : `Processed ${filesProcessed} files with ${totalInserted} trades`
+        
         await supabase.from('activity_logs').insert({
           job_id: job.id,
           log_type: 'success',
-          message: `Processed ${filesProcessed} files with ${totalInserted} trades`,
-          details: { files_count: filesProcessed, trades_count: totalInserted, files: processedFileNames }
+          message: logMessage,
+          details: { 
+            files_count: filesProcessed, 
+            trades_count: totalInserted, 
+            empty_files: emptyFilesCount,
+            filtered_trades: filteredTradesCount,
+            files: processedFileNames,
+            file_details: processedFileDetails.slice(0, 20) // Include details for first 20 files
+          }
         })
 
         // Update job status
@@ -437,14 +461,19 @@ async function fetchCboeDataSinceLastRun(venue: string, lastRunAt: string | null
 // Columns: Timestamp,Trading Date Time,Symbol,Price,Price Notation,Price Currency,
 //          Executed Shares,Notional Amount,Notional Currency,Execution Venue,...
 function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
+  return parseCboeDataWithStats(rawData, jobName).trades
+}
+
+function parseCboeDataWithStats(rawData: string, jobName: string): { trades: TradeRecord[]; totalLines: number; filteredCount: number } {
   const trades: TradeRecord[] = []
+  let filteredCount = 0
   
   try {
     const lines = rawData.split('\n').filter(line => line.trim())
     
     if (lines.length < 2) {
       console.log('CBOE: No data lines found')
-      return trades
+      return { trades, totalLines: 0, filteredCount: 0 }
     }
 
     // Parse header to find column indices
@@ -466,6 +495,8 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
 
     console.log(`CBOE column indices: symbol=${indices.symbol}, price=${indices.price}, qty=${indices.executedShares}`)
 
+    const totalDataLines = lines.length - 1
+    
     for (let i = 1; i < lines.length; i++) {
       const values = parseCSVLine(lines[i])
       
@@ -487,7 +518,10 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
       const quantity = parseFloat(qtyStr) || 0
       
       // Skip zero-price or zero-quantity trades
-      if (price === 0 || quantity === 0) continue
+      if (price === 0 || quantity === 0) {
+        filteredCount++
+        continue
+      }
 
       trades.push({
         symbol,
@@ -502,12 +536,13 @@ function parseCboeData(rawData: string, jobName: string): TradeRecord[] {
       })
     }
 
-    console.log(`CBOE: Parsed ${trades.length} trades from ${lines.length - 1} lines`)
+    console.log(`CBOE: Parsed ${trades.length} trades from ${totalDataLines} lines (${filteredCount} filtered)`)
+    return { trades, totalLines: totalDataLines, filteredCount }
   } catch (e) {
     console.error(`Failed to parse CBOE data for ${jobName}: ${e}`)
   }
   
-  return trades
+  return { trades, totalLines: 0, filteredCount }
 }
 
 // Nasdaq: Files are available for 48 hours with 15 min delay
@@ -643,14 +678,19 @@ async function fetchNasdaqDataSinceLastRun(lastRunAt: string | null, supabase: a
 //          Venue of execution;Venue of publication;Price notation;Transaction to be cleared;MMT flag;
 //          Transaction identification code;Trade type;Price;Quantity;Buyer;Seller;...
 function parseNasdaqData(rawData: string, jobName: string): TradeRecord[] {
+  return parseNasdaqDataWithStats(rawData, jobName).trades
+}
+
+function parseNasdaqDataWithStats(rawData: string, jobName: string): { trades: TradeRecord[]; totalLines: number; filteredCount: number } {
   const trades: TradeRecord[] = []
+  let filteredCount = 0
   
   try {
     const lines = rawData.split('\n').filter(line => line.trim())
     
     if (lines.length < 3) {
       console.log('Nasdaq: No data lines found')
-      return trades
+      return { trades, totalLines: 0, filteredCount: 0 }
     }
 
     // Skip the "sep=;" line if present
@@ -677,6 +717,8 @@ function parseNasdaqData(rawData: string, jobName: string): TradeRecord[] {
 
     console.log(`Nasdaq column indices: symbol=${indices.symbol}, price=${indices.price}, qty=${indices.quantity}`)
 
+    const totalDataLines = lines.length - headerLineIdx - 1
+    
     for (let i = headerLineIdx + 1; i < lines.length; i++) {
       const values = lines[i].split(';').map(v => v.trim())
       
@@ -695,7 +737,10 @@ function parseNasdaqData(rawData: string, jobName: string): TradeRecord[] {
       const quantity = parseFloat(qtyStr) || 0
       
       // Skip zero-price or zero-quantity trades
-      if (price === 0 || quantity === 0) continue
+      if (price === 0 || quantity === 0) {
+        filteredCount++
+        continue
+      }
 
       trades.push({
         symbol,
@@ -710,12 +755,13 @@ function parseNasdaqData(rawData: string, jobName: string): TradeRecord[] {
       })
     }
 
-    console.log(`Nasdaq: Parsed ${trades.length} trades from ${lines.length - headerLineIdx - 1} lines`)
+    console.log(`Nasdaq: Parsed ${trades.length} trades from ${totalDataLines} lines (${filteredCount} filtered)`)
+    return { trades, totalLines: totalDataLines, filteredCount }
   } catch (e) {
     console.error(`Failed to parse Nasdaq data for ${jobName}: ${e}`)
   }
   
-  return trades
+  return { trades, totalLines: 0, filteredCount }
 }
 
 // LSEG DMD: Scrape HTML page for file links, download CSV/GZ files
@@ -748,21 +794,53 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
     }
     
     const html = await response.text()
+    console.log(`LSEG: Fetched HTML page, length=${html.length} chars`)
     
-    // Extract file links from HTML using regex
-    // Looking for href attributes containing .csv or .csv.gz files
-    const linkRegex = /href="([^"]*\.csv(?:\.gz)?)"/gi
-    const matches = [...html.matchAll(linkRegex)]
+    // Log a sample of the HTML for debugging
+    console.log(`LSEG: HTML sample (first 500 chars): ${html.substring(0, 500).replace(/\n/g, ' ')}`)
     
-    console.log(`LSEG: Found ${matches.length} file links in HTML`)
+    // Extract file links from HTML using multiple regex patterns
+    // Pattern 1: href="..." with .csv or .csv.gz files
+    const linkRegex1 = /href\s*=\s*["']([^"']*\.csv(?:\.gz)?)["']/gi
+    // Pattern 2: href=... without quotes (some HTML pages)
+    const linkRegex2 = /href\s*=\s*([^\s>"']+\.csv(?:\.gz)?)/gi
+    // Pattern 3: Look for any URL containing .csv
+    const linkRegex3 = /["'](https?:\/\/[^"'\s]*\.csv(?:\.gz)?)["']/gi
+    
+    const allMatches: string[] = []
+    
+    // Try all patterns
+    for (const match of html.matchAll(linkRegex1)) {
+      allMatches.push(match[1])
+    }
+    for (const match of html.matchAll(linkRegex2)) {
+      if (!allMatches.includes(match[1])) {
+        allMatches.push(match[1])
+      }
+    }
+    for (const match of html.matchAll(linkRegex3)) {
+      if (!allMatches.includes(match[1])) {
+        allMatches.push(match[1])
+      }
+    }
+    
+    console.log(`LSEG: Found ${allMatches.length} file links in HTML`)
+    if (allMatches.length === 0) {
+      // Log more HTML for debugging when no matches found
+      console.log(`LSEG: Full HTML (first 2000 chars): ${html.substring(0, 2000).replace(/\n/g, ' ')}`)
+      console.log(`LSEG: Looking for any anchor tags...`)
+      const anchorMatches = html.match(/<a[^>]*>/gi) || []
+      console.log(`LSEG: Found ${anchorMatches.length} anchor tags, first 5: ${anchorMatches.slice(0, 5).join(', ')}`)
+    } else {
+      console.log(`LSEG: Sample matches: ${allMatches.slice(0, 5).join(', ')}`)
+    }
     
     // Group files by date
     // End-of-day pattern: XXXX-post-YYYY-MM-DD.csv.gz
     // Intraday pattern: XXXX-post-YYYY-MM-DDTHH_MM.csv
     const filesByDate: Map<string, { gzFile?: string; csvFiles: string[] }> = new Map()
     
-    for (const match of matches) {
-      const href = match[1]
+    for (const href of allMatches) {
       // Extract just the filename from the href
       const fileName = href.split('/').pop() || href
       
@@ -937,14 +1015,19 @@ async function fetchAndDecompressGz(url: string): Promise<string | null> {
 // Price notation;Quantity;Venue of execution;Publication date and time;
 // Venue of Publication;Transaction identification code;Flags
 function parseLsegPostTradeData(rawData: string, jobName: string): TradeRecord[] {
+  return parseLsegPostTradeDataWithStats(rawData, jobName).trades
+}
+
+function parseLsegPostTradeDataWithStats(rawData: string, jobName: string): { trades: TradeRecord[]; totalLines: number; filteredCount: number } {
   const trades: TradeRecord[] = []
+  let filteredCount = 0
   
   try {
     const lines = rawData.split('\n').filter(line => line.trim())
     
     if (lines.length < 2) {
       console.log('LSEG: No data lines found')
-      return trades
+      return { trades, totalLines: 0, filteredCount: 0 }
     }
 
     // Skip the "sep=;" line if present
@@ -971,6 +1054,8 @@ function parseLsegPostTradeData(rawData: string, jobName: string): TradeRecord[]
 
     console.log(`LSEG column indices: symbol=${indices.symbol}, price=${indices.price}, qty=${indices.quantity}, venue=${indices.venue}`)
 
+    const totalDataLines = lines.length - headerLineIdx - 1
+    
     for (let i = headerLineIdx + 1; i < lines.length; i++) {
       const values = lines[i].split(';').map(v => v.trim())
       
@@ -989,7 +1074,10 @@ function parseLsegPostTradeData(rawData: string, jobName: string): TradeRecord[]
       const quantity = parseFloat(qtyStr) || 0
       
       // Skip zero-price or zero-quantity trades
-      if (price === 0 || quantity === 0) continue
+      if (price === 0 || quantity === 0) {
+        filteredCount++
+        continue
+      }
 
       trades.push({
         symbol,
@@ -1003,12 +1091,13 @@ function parseLsegPostTradeData(rawData: string, jobName: string): TradeRecord[]
       })
     }
 
-    console.log(`LSEG: Parsed ${trades.length} trades from ${lines.length - headerLineIdx - 1} lines`)
+    console.log(`LSEG: Parsed ${trades.length} trades from ${totalDataLines} lines (${filteredCount} filtered)`)
+    return { trades, totalLines: totalDataLines, filteredCount }
   } catch (e) {
     console.error(`Failed to parse LSEG data for ${jobName}: ${e}`)
   }
   
-  return trades
+  return { trades, totalLines: 0, filteredCount }
 }
 function parseCSVLine(line: string, separator: string = ','): string[] {
   const result: string[] = []
