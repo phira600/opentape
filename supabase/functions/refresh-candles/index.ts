@@ -231,6 +231,8 @@ Deno.serve(async (req) => {
 // Process incremental refresh for recently inserted trades
 // Finds trades by created_at (when inserted) and builds candles for their trade_time
 async function processIncremental(supabase: any, startTime: number) {
+  const MAX_GAP_HOURS = 4 // If gap > 4 hours, use smaller windows
+  
   // Get last refresh time from mv_refresh_log
   const { data: lastRefresh } = await supabase
     .from('mv_refresh_log')
@@ -248,7 +250,91 @@ async function processIncremental(supabase: any, startTime: number) {
 
   console.log(`[Incremental] Finding trades created since ${createdSince.toISOString()}`)
 
-  // Fetch recently created trades (paged to avoid 1000 row limit)
+  // Check if gap is too large
+  const gapMs = Date.now() - createdSince.getTime()
+  const gapHours = gapMs / (60 * 60 * 1000)
+  
+  if (gapHours > MAX_GAP_HOURS) {
+    console.log(`[Incremental] Gap too large (${gapHours.toFixed(1)}h), processing in 1-hour chunks`)
+    return await processInChunks(supabase, createdSince, startTime)
+  }
+
+  // Normal path for small gaps
+  return await processTrades(supabase, createdSince, startTime)
+}
+
+// Process trades in hour-by-hour chunks when gap is large
+async function processInChunks(supabase: any, createdSince: Date, startTime: number) {
+  let totalCandles = 0
+  let totalTrades = 0
+  let hoursProcessed = 0
+  
+  let windowStart = new Date(createdSince)
+  const windowEnd = new Date()
+  
+  while (windowStart < windowEnd) {
+    const chunkEnd = new Date(Math.min(windowStart.getTime() + 60 * 60 * 1000, windowEnd.getTime()))
+    
+    console.log(`[Chunk] Processing ${windowStart.toISOString()} to ${chunkEnd.toISOString()}`)
+    
+    const result = await processTradesForWindow(supabase, windowStart, chunkEnd)
+    totalCandles += result.candleCount
+    totalTrades += result.tradeCount
+    hoursProcessed++
+    
+    // Log progress every hour
+    if (hoursProcessed % 1 === 0 && result.tradeCount > 0) {
+      await supabase.from('activity_logs').insert({
+        log_type: 'info',
+        message: `Refresh candles: processed ${hoursProcessed} hours, ${totalCandles} candles, ${totalTrades} trades`,
+        details: { hours_processed: hoursProcessed, candles: totalCandles, trades: totalTrades }
+      })
+    }
+    
+    windowStart = chunkEnd
+  }
+  
+  console.log(`[Chunks] Completed: ${hoursProcessed} hours, ${totalCandles} candles, ${totalTrades} trades`)
+  return { candleCount: totalCandles, tradeCount: totalTrades }
+}
+
+// Process trades for a specific time window
+async function processTradesForWindow(supabase: any, windowStart: Date, windowEnd: Date) {
+  const pageSize = 5000
+  const trades: any[] = []
+  let page = 0
+
+  while (true) {
+    const { data: tradesPage, error: tradesError } = await supabase
+      .from('trades_normalized')
+      .select('symbol, currency, trade_time, price, quantity')
+      .gte('created_at', windowStart.toISOString())
+      .lt('created_at', windowEnd.toISOString())
+      .order('trade_time', { ascending: true })
+      .range(page * pageSize, (page + 1) * pageSize - 1)
+
+    if (tradesError) {
+      throw new Error(`Failed to fetch trades: ${tradesError.message}`)
+    }
+
+    if (tradesPage && tradesPage.length > 0) {
+      trades.push(...tradesPage)
+    }
+
+    if (!tradesPage || tradesPage.length < pageSize) break
+    page++
+    if (page >= 20) break // hard stop at 100k trades per window
+  }
+
+  if (trades.length === 0) {
+    return { candleCount: 0, tradeCount: 0 }
+  }
+
+  return aggregateAndUpsertCandles(supabase, trades)
+}
+
+// Normal processing for small gaps
+async function processTrades(supabase: any, createdSince: Date, startTime: number) {
   const pageSize = 5000
   const trades: any[] = []
   let page = 0
@@ -280,21 +366,29 @@ async function processIncremental(supabase: any, startTime: number) {
     return { candleCount: 0, tradeCount: 0 }
   }
 
+  return aggregateAndUpsertCandles(supabase, trades)
+}
+
+// O(1) candle aggregation per trade
+async function aggregateAndUpsertCandles(supabase: any, trades: any[]) {
   // Find the oldest trade_time from these trades, subtract 2 minutes, round to :00
   const oldestTradeTime = new Date(trades[0].trade_time)
   const candleStartTime = new Date(oldestTradeTime.getTime() - 2 * 60 * 1000)
   candleStartTime.setSeconds(0, 0) // Round to minute boundary
 
-  console.log(`[Incremental] Building candles starting from ${candleStartTime.toISOString()}`)
-
-  // Group trades by symbol + currency + minute bucket
+  // O(1) aggregation: track OHLC directly instead of storing price arrays
   const candleMap = new Map<string, {
     symbol: string
     currency: string
     bucket: string
-    prices: { price: number, time: string }[]
+    open: number
+    high: number
+    low: number
+    close: number
     volume: number
     trade_count: number
+    firstTime: string
+    lastTime: string
   }>()
 
   for (const trade of trades) {
@@ -308,40 +402,53 @@ async function processIncremental(supabase: any, startTime: number) {
     const bucketStr = bucket.toISOString()
     const currency = trade.currency || 'SEK'
     const key = `${trade.symbol}|${currency}|${bucketStr}`
+    const price = Number(trade.price)
+    const quantity = Number(trade.quantity)
 
     if (!candleMap.has(key)) {
       candleMap.set(key, {
         symbol: trade.symbol,
         currency,
         bucket: bucketStr,
-        prices: [],
-        volume: 0,
-        trade_count: 0
+        open: price,
+        high: price,
+        low: price,
+        close: price,
+        volume: quantity,
+        trade_count: 1,
+        firstTime: trade.trade_time,
+        lastTime: trade.trade_time
       })
+    } else {
+      const candle = candleMap.get(key)!
+      // Track open (first trade) and close (last trade) by comparing timestamps
+      if (trade.trade_time < candle.firstTime) {
+        candle.open = price
+        candle.firstTime = trade.trade_time
+      }
+      if (trade.trade_time > candle.lastTime) {
+        candle.close = price
+        candle.lastTime = trade.trade_time
+      }
+      candle.high = Math.max(candle.high, price)
+      candle.low = Math.min(candle.low, price)
+      candle.volume += quantity
+      candle.trade_count++
     }
-
-    const candle = candleMap.get(key)!
-    candle.prices.push({ price: Number(trade.price), time: trade.trade_time })
-    candle.volume += Number(trade.quantity)
-    candle.trade_count++
   }
 
-  // Convert to candles array
-  const candles = Array.from(candleMap.values()).map(c => {
-    const sortedPrices = c.prices.sort((a, b) => a.time.localeCompare(b.time))
-    const prices = sortedPrices.map(p => p.price)
-    return {
-      symbol: c.symbol,
-      currency: c.currency,
-      bucket: c.bucket,
-      open: prices[0],
-      high: Math.max(...prices),
-      low: Math.min(...prices),
-      close: prices[prices.length - 1],
-      volume: c.volume,
-      trade_count: c.trade_count
-    }
-  })
+  // Convert to candles array (exclude internal tracking fields)
+  const candles = Array.from(candleMap.values()).map(c => ({
+    symbol: c.symbol,
+    currency: c.currency,
+    bucket: c.bucket,
+    open: c.open,
+    high: c.high,
+    low: c.low,
+    close: c.close,
+    volume: c.volume,
+    trade_count: c.trade_count
+  }))
 
   console.log(`Generated ${candles.length} candles from ${trades.length} trades`)
 
