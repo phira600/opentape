@@ -773,6 +773,7 @@ function parseNasdaqDataWithStats(rawData: string, jobName: string): { trades: T
 //   End-of-day: XXXX-post-YYYY-MM-DD.csv.gz (consolidated, priority)
 //   Intraday: XXXX-post-YYYY-MM-DDTHH_MM.csv
 async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId: string): Promise<FetchedFile[]> {
+  console.log(`LSEG fetchLsegDataSinceLastRun called with sourceUrl: ${sourceUrl}`)
   const files: FetchedFile[] = []
   
   try {
