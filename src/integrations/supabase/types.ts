@@ -119,7 +119,9 @@ export type Database = {
           bucket: string
           close: number | null
           currency: string
+          first_trade_ts: string
           high: number | null
+          last_trade_ts: string
           low: number | null
           open: number | null
           symbol: string
@@ -130,7 +132,9 @@ export type Database = {
           bucket: string
           close?: number | null
           currency: string
+          first_trade_ts: string
           high?: number | null
+          last_trade_ts: string
           low?: number | null
           open?: number | null
           symbol: string
@@ -141,7 +145,9 @@ export type Database = {
           bucket?: string
           close?: number | null
           currency?: string
+          first_trade_ts?: string
           high?: number | null
+          last_trade_ts?: string
           low?: number | null
           open?: number | null
           symbol?: string
