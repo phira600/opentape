@@ -254,7 +254,7 @@ async function processHourOptimized(supabase: any, hourStart: Date, hourEnd: Dat
   let tradeCount = 0
   let candleCount = 0
 
-  // Candle map with O(1) updates - no price arrays
+  // Candle map with O(1) updates - tracks timestamps for open/close
   const candleMap = new Map<string, {
     symbol: string
     currency: string
@@ -265,7 +265,8 @@ async function processHourOptimized(supabase: any, hourStart: Date, hourEnd: Dat
     close: number
     volume: number
     trade_count: number
-    first_time: string  // Track first trade time for open price
+    first_trade_ts: string  // Track first trade time for open price
+    last_trade_ts: string   // Track last trade time for close price
   }>()
 
   while (true) {
@@ -310,17 +311,21 @@ async function processHourOptimized(supabase: any, hourStart: Date, hourEnd: Dat
           close: price,
           volume: quantity,
           trade_count: 1,
-          first_time: trade.trade_time
+          first_trade_ts: trade.trade_time,
+          last_trade_ts: trade.trade_time
         })
       } else {
-        // O(1) update - simple comparisons, no arrays
-        if (trade.trade_time < existing.first_time) {
+        // O(1) update - simple comparisons for open/close based on timestamps
+        if (trade.trade_time < existing.first_trade_ts) {
           existing.open = price
-          existing.first_time = trade.trade_time
+          existing.first_trade_ts = trade.trade_time
+        }
+        if (trade.trade_time > existing.last_trade_ts) {
+          existing.close = price
+          existing.last_trade_ts = trade.trade_time
         }
         if (price > existing.high) existing.high = price
         if (price < existing.low) existing.low = price
-        existing.close = price  // Last trade becomes close
         existing.volume += quantity
         existing.trade_count++
       }
@@ -340,7 +345,9 @@ async function processHourOptimized(supabase: any, hourStart: Date, hourEnd: Dat
       low: c.low,
       close: c.close,
       volume: c.volume,
-      trade_count: c.trade_count
+      trade_count: c.trade_count,
+      first_trade_ts: c.first_trade_ts,
+      last_trade_ts: c.last_trade_ts
     }))
 
     for (let i = 0; i < candles.length; i += CANDLE_UPSERT_BATCH) {
