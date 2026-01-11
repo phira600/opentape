@@ -3,10 +3,11 @@ import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDistanceToNow } from "date-fns";
-import { RefreshCw, RotateCcw } from "lucide-react";
+import { RefreshCw, RotateCcw, Save } from "lucide-react";
 import { toast } from "sonner";
 
 interface CronJobConfig {
@@ -25,6 +26,9 @@ export function CronJobsTable() {
   const [jobs, setJobs] = useState<CronJobConfig[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [resettingJob, setResettingJob] = useState<string | null>(null);
+  const [editingRetention, setEditingRetention] = useState<string | null>(null);
+  const [retentionValue, setRetentionValue] = useState<string>("");
+  const [savingRetention, setSavingRetention] = useState<string | null>(null);
 
   const fetchJobs = async () => {
     const { data, error } = await supabase
@@ -76,6 +80,42 @@ export function CronJobsTable() {
       toast.error("Failed to reset job status");
     } finally {
       setResettingJob(null);
+    }
+  };
+
+  const startEditingRetention = (job: CronJobConfig) => {
+    setEditingRetention(job.id);
+    setRetentionValue(job.retention_days?.toString() || "30");
+  };
+
+  const cancelEditingRetention = () => {
+    setEditingRetention(null);
+    setRetentionValue("");
+  };
+
+  const saveRetentionDays = async (jobId: string) => {
+    const days = parseInt(retentionValue, 10);
+    if (isNaN(days) || days < 1 || days > 365) {
+      toast.error("Retention days must be between 1 and 365");
+      return;
+    }
+
+    setSavingRetention(jobId);
+    try {
+      const { error } = await supabase
+        .from("cron_job_configurations")
+        .update({ retention_days: days })
+        .eq("id", jobId);
+
+      if (error) throw error;
+      toast.success(`Retention updated to ${days} days`);
+      setEditingRetention(null);
+      setRetentionValue("");
+      fetchJobs();
+    } catch (err) {
+      toast.error("Failed to update retention days");
+    } finally {
+      setSavingRetention(null);
     }
   };
 
@@ -147,6 +187,7 @@ export function CronJobsTable() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Schedule</TableHead>
+                  <TableHead>Retention</TableHead>
                   <TableHead>Status</TableHead>
                   <TableHead>Last Run</TableHead>
                   <TableHead>Error</TableHead>
@@ -170,6 +211,46 @@ export function CronJobsTable() {
                       <code className="text-xs bg-muted px-1.5 py-0.5 rounded">
                         {job.schedule}
                       </code>
+                    </TableCell>
+                    <TableCell>
+                      {job.retention_days !== null ? (
+                        editingRetention === job.id ? (
+                          <div className="flex items-center gap-1">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={365}
+                              value={retentionValue}
+                              onChange={(e) => setRetentionValue(e.target.value)}
+                              className="w-16 h-7 text-xs"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") saveRetentionDays(job.id);
+                                if (e.key === "Escape") cancelEditingRetention();
+                              }}
+                              autoFocus
+                            />
+                            <span className="text-xs text-muted-foreground">days</span>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-7 w-7 p-0"
+                              onClick={() => saveRetentionDays(job.id)}
+                              disabled={savingRetention === job.id}
+                            >
+                              <Save className={`h-3 w-3 ${savingRetention === job.id ? "animate-spin" : ""}`} />
+                            </Button>
+                          </div>
+                        ) : (
+                          <button
+                            onClick={() => startEditingRetention(job)}
+                            className="text-xs text-muted-foreground hover:text-foreground hover:underline cursor-pointer"
+                          >
+                            {job.retention_days} days
+                          </button>
+                        )
+                      ) : (
+                        <span className="text-xs text-muted-foreground">—</span>
+                      )}
                     </TableCell>
                     <TableCell>
                       <div className="flex items-center gap-2">
