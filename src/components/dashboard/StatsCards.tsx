@@ -5,6 +5,7 @@ import { Database, TrendingUp, Activity, Clock, RefreshCw } from "lucide-react";
 
 interface Stats {
   totalTrades: number;
+  allTimeTrades: number;
   totalSymbols: number;
   totalVenues: number;
   lastFetch: string | null;
@@ -18,6 +19,7 @@ interface Stats {
 export function StatsCards() {
   const [stats, setStats] = useState<Stats>({
     totalTrades: 0,
+    allTimeTrades: 0,
     totalSymbols: 0,
     totalVenues: 0,
     lastFetch: null,
@@ -40,6 +42,15 @@ export function StatsCards() {
       .eq("date", todayStr)
       .maybeSingle() as any;
 
+    // Get all-time total by summing daily_stats (fast: ~100-300 rows vs 15.9M)
+    const { data: allTimeData } = await supabase
+      .from("daily_stats" as any)
+      .select("total_trades") as any;
+
+    const allTimeTrades = allTimeData?.reduce(
+      (sum: number, day: { total_trades: number | string }) => sum + Number(day.total_trades), 0
+    ) || 0;
+
     // Get last fetch time
     const { data: lastJob } = await supabase
       .from("job_configurations")
@@ -61,6 +72,7 @@ export function StatsCards() {
     if (dailyStats) {
       setStats({
         totalTrades: Number(dailyStats.total_trades) || 0,
+        allTimeTrades,
         totalSymbols: dailyStats.unique_symbols || 0,
         totalVenues: dailyStats.unique_venues || 0,
         lastFetch: lastJob?.last_run_at || null,
@@ -95,6 +107,7 @@ export function StatsCards() {
 
     setStats({
       totalTrades: tradesCount || 0,
+      allTimeTrades,
       totalSymbols: uniqueSymbols.size,
       totalVenues: uniqueVenues.size,
       lastFetch: lastJob?.last_run_at || null,
@@ -151,12 +164,12 @@ export function StatsCards() {
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Total Trades</CardTitle>
+          <CardTitle className="text-sm font-medium">Today's Trades</CardTitle>
           <Database className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">{formatNumber(stats.totalTrades)}</div>
-          <p className="text-xs text-muted-foreground">Today</p>
+          <p className="text-xs text-muted-foreground">Total: {formatNumber(stats.allTimeTrades)}</p>
         </CardContent>
       </Card>
 
