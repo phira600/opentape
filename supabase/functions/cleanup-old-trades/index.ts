@@ -89,11 +89,7 @@ Deno.serve(async (req) => {
 
     console.log(`Cleanup complete. Deleted ${totalDeleted} trades in ${batchCount} batches. Remaining: ${remainingCount}`)
 
-    // Only refresh candles if we actually deleted something
-    if (totalDeleted > 0) {
-      console.log('Refreshing candles materialized view...')
-      await supabase.rpc('refresh_candles')
-    }
+    // Note: Candle cleanup is handled separately by cleanup-old-candles job
 
     // Update cron job configuration with success status
     await supabase
