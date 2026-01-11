@@ -191,8 +191,8 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
   const handleScheduleUpdate = async (cronJob: CronJobConfiguration) => {
     const updateData: { schedule: string; retention_days?: number } = { schedule: scheduleValue };
     
-    // Include retention_days if this is the cleanup job
-    if (cronJob.id === "cleanup-old-trades") {
+    // Include retention_days for cleanup jobs
+    if (cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles") {
       updateData.retention_days = retentionDays;
     }
 
@@ -813,7 +813,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                       <Button variant="ghost" size="sm" className="h-auto p-1 font-normal">
                         <span className="text-sm text-muted-foreground">
                           {parseCronSchedule(cronJob.schedule)}
-                          {cronJob.id === "cleanup-old-trades" && cronJob.retention_days && (
+                          {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles") && cronJob.retention_days && (
                             <span className="ml-1">({cronJob.retention_days}d)</span>
                           )}
                         </span>
@@ -841,7 +841,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                           </div>
                         </div>
 
-                        {cronJob.id === "cleanup-old-trades" && (
+                        {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles") && (
                           <div className="space-y-2">
                             <Label className="text-sm">Retention Period (days)</Label>
                             <Input
@@ -852,7 +852,9 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                               onChange={(e) => setRetentionDays(parseInt(e.target.value) || 30)}
                             />
                             <p className="text-xs text-muted-foreground">
-                              Trades older than this will be deleted
+                              {cronJob.id === "cleanup-old-trades" 
+                                ? "Trades older than this will be deleted"
+                                : "Candles older than this will be deleted"}
                             </p>
                           </div>
                         )}
