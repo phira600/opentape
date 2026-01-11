@@ -77,6 +77,13 @@ const CRON_JOBS: CronJobDefinition[] = [
     config_id: 'cleanup-old-trades'  // Maps to cron_job_configurations.id
   },
   {
+    name: 'cleanup-old-candles-daily',
+    schedule: '0 */4 * * *',
+    function_name: 'cleanup-old-candles',
+    description: 'Cleans up old candles based on retention settings (every 4 hours)',
+    config_id: 'cleanup-old-candles'  // Maps to cron_job_configurations.id
+  },
+  {
     name: 'cboe-sis-symbology-daily',
     schedule: '0 8 * * 1-5',
     function_name: 'fetch-symbology',

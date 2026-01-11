@@ -495,6 +495,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cleanup_old_candles_batch: {
+        Args: { batch_size?: number; cutoff_date: string }
+        Returns: number
+      }
       cleanup_old_trades:
         | { Args: never; Returns: number }
         | { Args: { retention_days?: number }; Returns: number }
