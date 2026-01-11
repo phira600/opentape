@@ -160,6 +160,12 @@ export function StatsCards() {
     return date.toLocaleTimeString();
   };
 
+  const formatDate = (dateStr: string | null) => {
+    if (!dateStr) return "";
+    const date = new Date(dateStr);
+    return date.toLocaleDateString();
+  };
+
   return (
     <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-5">
       <Card>
@@ -202,7 +208,7 @@ export function StatsCards() {
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">{formatTime(stats.lastFetch)}</div>
-          <p className="text-xs text-muted-foreground">Most recent run</p>
+          <p className="text-xs text-muted-foreground">{formatDate(stats.lastFetch)}</p>
         </CardContent>
       </Card>
 
@@ -213,11 +219,7 @@ export function StatsCards() {
         </CardHeader>
         <CardContent>
           <div className="text-2xl font-bold">{formatTime(stats.candlesRefresh.refreshedAt)}</div>
-          <p className="text-xs text-muted-foreground">
-            {stats.candlesRefresh.rowsCount !== null 
-              ? `${formatNumber(stats.candlesRefresh.rowsCount)} rows` 
-              : "No refresh yet"}
-          </p>
+          <p className="text-xs text-muted-foreground">{formatDate(stats.candlesRefresh.refreshedAt)}</p>
         </CardContent>
       </Card>
     </div>
