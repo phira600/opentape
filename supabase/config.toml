@@ -29,3 +29,6 @@ verify_jwt = false
 
 [functions.recreate-candles]
 verify_jwt = false
+
+[functions.cleanup-old-candles]
+verify_jwt = false
