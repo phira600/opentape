@@ -135,8 +135,8 @@ Deno.serve(async (req) => {
     // Process trades with optimized O(1) aggregation
     const result = await processTradesOptimized(supabase, fromDate, toDate)
 
-    // Update daily_stats for affected dates
-    await updateDailyStats(supabase, fromDate, toDate)
+    // Note: daily_stats is updated by tr_update_daily_stats_on_trade trigger when trades are inserted
+    // We don't update it here since we're recreating candles, not inserting new trades
 
     const duration = Date.now() - startTime
 
@@ -364,53 +364,4 @@ async function processHourOptimized(supabase: any, hourStart: Date, hourEnd: Dat
   }
 
   return { candleCount, tradeCount }
-}
-
-// Update daily_stats for affected dates
-async function updateDailyStats(supabase: any, startDate: Date, endDate: Date) {
-  const dates: string[] = []
-  const current = new Date(startDate)
-  while (current <= endDate) {
-    dates.push(current.toISOString().split('T')[0])
-    current.setUTCDate(current.getUTCDate() + 1)
-  }
-
-  console.log(`[Recreate Candles] Updating daily_stats for ${dates.length} days`)
-
-  for (const date of dates) {
-    const dayStart = new Date(date + 'T00:00:00Z')
-    const dayEnd = new Date(dayStart)
-    dayEnd.setUTCDate(dayEnd.getUTCDate() + 1)
-
-    // Count trades for this day
-    const { count: tradeCount } = await supabase
-      .from('trades_normalized')
-      .select('*', { count: 'exact', head: true })
-      .gte('trade_time', dayStart.toISOString())
-      .lt('trade_time', dayEnd.toISOString())
-
-    // Get unique symbols and venues (limited sample)
-    const { data: sampleData } = await supabase
-      .from('trades_normalized')
-      .select('symbol, venue')
-      .gte('trade_time', dayStart.toISOString())
-      .lt('trade_time', dayEnd.toISOString())
-      .limit(10000)
-
-    const uniqueSymbols = new Set(sampleData?.map((t: any) => t.symbol) || [])
-    const uniqueVenues = new Set(sampleData?.map((t: any) => t.venue) || [])
-
-    // Upsert daily stats
-    await supabase
-      .from('daily_stats')
-      .upsert({
-        date,
-        total_trades: tradeCount || 0,
-        unique_symbols: uniqueSymbols.size,
-        unique_venues: uniqueVenues.size,
-        last_updated: new Date().toISOString()
-      }, { onConflict: 'date' })
-  }
-
-  console.log(`[Recreate Candles] Updated daily_stats for ${dates.length} days`)
 }
