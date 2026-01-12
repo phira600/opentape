@@ -144,26 +144,37 @@ export default function ApiTest() {
   };
 
   const handleQuerySymbology = async () => {
+    const apiKey = getActiveApiKey();
+    if (!apiKey) {
+      toast({ title: "Please select or enter an API key", variant: "destructive" });
+      return;
+    }
+
     setSymLoading(true);
     setSymResult("");
 
     try {
-      const params: Record<string, string> = {};
-      if (symSymbol) params.symbol = symSymbol;
-      if (symIsin) params.isin = symIsin;
-      if (symName) params.name = symName;
-      if (symVenue) params.venue = symVenue;
-      if (symSource) params.source = symSource;
-      if (symCurrency) params.currency = symCurrency;
-      if (symExact) params.exact = "true";
-      if (symLimit) params.limit = symLimit;
-      if (symOffset && symOffset !== "0") params.offset = symOffset;
+      const params = new URLSearchParams();
+      if (symSymbol) params.append("symbol", symSymbol);
+      if (symIsin) params.append("isin", symIsin);
+      if (symName) params.append("name", symName);
+      if (symVenue) params.append("venue", symVenue);
+      if (symSource) params.append("source", symSource);
+      if (symCurrency) params.append("currency", symCurrency);
+      if (symExact) params.append("exact", "true");
+      if (symLimit) params.append("limit", symLimit);
+      if (symOffset && symOffset !== "0") params.append("offset", symOffset);
 
-      const { data, error } = await supabase.functions.invoke("query-symbology", {
-        body: params,
-      });
+      const response = await fetch(
+        `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/query-symbology?${params}`,
+        {
+          headers: {
+            "x-api-key": apiKey,
+          },
+        }
+      );
 
-      if (error) throw error;
+      const data = await response.json();
       setSymResult(JSON.stringify(data, null, 2));
     } catch (error) {
       setSymResult(JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }, null, 2));
@@ -404,7 +415,7 @@ export default function ApiTest() {
                   <CardTitle>/query-symbology</CardTitle>
                 </div>
                 <CardDescription>
-                  Search and filter financial instrument reference data (no API key required)
+                  Search and filter financial instrument reference data
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
