@@ -9,11 +9,7 @@ interface Stats {
   totalSymbols: number;
   totalVenues: number;
   lastFetch: string | null;
-  candlesRefresh: {
-    refreshedAt: string | null;
-    rowsCount: number | null;
-    durationMs: number | null;
-  };
+  statsUpdated: string | null;
 }
 
 export function StatsCards() {
@@ -23,11 +19,7 @@ export function StatsCards() {
     totalSymbols: 0,
     totalVenues: 0,
     lastFetch: null,
-    candlesRefresh: {
-      refreshedAt: null,
-      rowsCount: null,
-      durationMs: null,
-    },
+    statsUpdated: null,
   });
 
   const fetchStats = async () => {
@@ -59,15 +51,6 @@ export function StatsCards() {
       .limit(1)
       .single();
 
-    // Get latest candles refresh info (refresh only, not recreate)
-    const { data: candlesLog } = await supabase
-      .from("mv_refresh_log")
-      .select("refreshed_at, rows_count, refresh_duration_ms")
-      .eq("view_name", "candles_1min_refresh")
-      .order("refreshed_at", { ascending: false })
-      .limit(1)
-      .single();
-
     // If daily_stats exists, use it (fast path)
     if (dailyStats) {
       setStats({
@@ -76,11 +59,7 @@ export function StatsCards() {
         totalSymbols: dailyStats.unique_symbols || 0,
         totalVenues: dailyStats.unique_venues || 0,
         lastFetch: lastJob?.last_run_at || null,
-        candlesRefresh: {
-          refreshedAt: candlesLog?.refreshed_at || null,
-          rowsCount: candlesLog?.rows_count || null,
-          durationMs: candlesLog?.refresh_duration_ms || null,
-        },
+        statsUpdated: dailyStats.last_updated || null,
       });
       return;
     }
@@ -111,11 +90,7 @@ export function StatsCards() {
       totalSymbols: uniqueSymbols.size,
       totalVenues: uniqueVenues.size,
       lastFetch: lastJob?.last_run_at || null,
-      candlesRefresh: {
-        refreshedAt: candlesLog?.refreshed_at || null,
-        rowsCount: candlesLog?.rows_count || null,
-        durationMs: candlesLog?.refresh_duration_ms || null,
-      },
+      statsUpdated: null,
     });
   };
 
@@ -125,18 +100,18 @@ export function StatsCards() {
     // Refresh stats every 30 seconds
     const interval = setInterval(fetchStats, 30000);
     
-    // Subscribe to realtime updates for mv_refresh_log
+    // Subscribe to realtime updates for daily_stats
     const channel = supabase
-      .channel('mv-refresh-updates')
+      .channel('daily-stats-updates')
       .on(
         'postgres_changes',
         {
-          event: 'INSERT',
+          event: '*',
           schema: 'public',
-          table: 'mv_refresh_log',
+          table: 'daily_stats',
         },
         () => {
-          // Refetch stats when a new refresh log entry is added
+          // Refetch stats when daily_stats is updated
           fetchStats();
         }
       )
@@ -214,12 +189,12 @@ export function StatsCards() {
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-          <CardTitle className="text-sm font-medium">Candle Refresh</CardTitle>
+          <CardTitle className="text-sm font-medium">Stats Updated</CardTitle>
           <RefreshCw className="h-4 w-4 text-muted-foreground" />
         </CardHeader>
         <CardContent>
-          <div className="text-2xl font-bold">{formatTime(stats.candlesRefresh.refreshedAt)}</div>
-          <p className="text-xs text-muted-foreground">{formatDate(stats.candlesRefresh.refreshedAt)}</p>
+          <div className="text-2xl font-bold">{formatTime(stats.statsUpdated)}</div>
+          <p className="text-xs text-muted-foreground">{formatDate(stats.statsUpdated)}</p>
         </CardContent>
       </Card>
     </div>
