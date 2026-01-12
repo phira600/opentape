@@ -49,7 +49,7 @@ export default function ApiTest() {
   const [symSymbol, setSymSymbol] = useState("");
   const [symIsin, setSymIsin] = useState("");
   const [symName, setSymName] = useState("");
-  const [symVenue, setSymVenue] = useState("");
+  const [symMic, setSymMic] = useState("");
   const [symSource, setSymSource] = useState("");
   const [symCurrency, setSymCurrency] = useState("");
   const [symExact, setSymExact] = useState(false);
@@ -158,7 +158,7 @@ export default function ApiTest() {
       if (symSymbol) params.append("symbol", symSymbol);
       if (symIsin) params.append("isin", symIsin);
       if (symName) params.append("name", symName);
-      if (symVenue) params.append("venue", symVenue);
+      if (symMic) params.append("mic", symMic);
       if (symSource) params.append("source", symSource);
       if (symCurrency) params.append("currency", symCurrency);
       if (symExact) params.append("exact", "true");
@@ -448,17 +448,20 @@ export default function ApiTest() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="sym-venue">Venue</Label>
-                    <Select value={symVenue || "all"} onValueChange={(v) => setSymVenue(v === "all" ? "" : v)}>
+                    <Label htmlFor="sym-mic">MIC</Label>
+                    <Select value={symMic || "all"} onValueChange={(v) => setSymMic(v === "all" ? "" : v)}>
                       <SelectTrigger>
-                        <SelectValue placeholder="All venues" />
+                        <SelectValue placeholder="All markets" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="all">All venues</SelectItem>
-                        <SelectItem value="SIS">SIS</SelectItem>
-                        <SelectItem value="BXE">BXE</SelectItem>
-                        <SelectItem value="CXE">CXE</SelectItem>
-                        <SelectItem value="DXE">DXE</SelectItem>
+                        <SelectItem value="all">All markets</SelectItem>
+                        <SelectItem value="XLON">XLON - London</SelectItem>
+                        <SelectItem value="XSTO">XSTO - Stockholm</SelectItem>
+                        <SelectItem value="XPAR">XPAR - Paris</SelectItem>
+                        <SelectItem value="XETR">XETR - Frankfurt</SelectItem>
+                        <SelectItem value="XAMS">XAMS - Amsterdam</SelectItem>
+                        <SelectItem value="XMAD">XMAD - Madrid</SelectItem>
+                        <SelectItem value="XMIL">XMIL - Milan</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

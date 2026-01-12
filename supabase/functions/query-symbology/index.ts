@@ -157,9 +157,9 @@ Deno.serve(async (req) => {
       dbQuery = dbQuery.ilike('name', `%${query.name}%`)
     }
     
-    // Filter by venue
-    if (query.venue) {
-      dbQuery = dbQuery.eq('venue', query.venue.toUpperCase())
+    // Filter by MIC (Market Identifier Code)
+    if (query.mic) {
+      dbQuery = dbQuery.eq('mic', query.mic.toUpperCase())
     }
     
     // Filter by source
