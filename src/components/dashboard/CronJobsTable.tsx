@@ -210,8 +210,9 @@ export function CronJobsTable() {
     }
   };
 
-  const formatLogMessage = (log: ActivityLogEntry): { title: string; details: string[] } => {
+  const formatLogMessage = (log: ActivityLogEntry): { title: string; details: string[]; error?: string } => {
     const details: string[] = [];
+    let error: string | undefined;
     
     // Parse common patterns and make them more readable
     let title = log.message;
@@ -219,6 +220,11 @@ export function CronJobsTable() {
     // Parse details object for common fields
     if (log.details && typeof log.details === "object" && log.details !== null) {
       const d = log.details as Record<string, unknown>;
+      
+      // Extract error message if present
+      if (d.error && typeof d.error === "string") {
+        error = d.error;
+      }
       
       if (d.count !== undefined) {
         details.push(`${Number(d.count).toLocaleString()} items processed`);
@@ -257,7 +263,7 @@ export function CronJobsTable() {
       }
     }
     
-    return { title, details };
+    return { title, details, error };
   };
 
   if (isLoading) {
@@ -445,6 +451,14 @@ export function CronJobsTable() {
             <SheetDescription>
               Recent activity logs for this cron job
             </SheetDescription>
+            {selectedJobForLogs?.last_error && (
+              <div className="mt-3 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                <p className="text-sm text-destructive font-medium flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <span className="break-words">{selectedJobForLogs.last_error}</span>
+                </p>
+              </div>
+            )}
           </SheetHeader>
           
           <div className="flex-1 overflow-hidden">
@@ -468,7 +482,7 @@ export function CronJobsTable() {
                   ) : (
                     <div className="divide-y">
                       {jobLogs.map((log) => {
-                        const { title, details } = formatLogMessage(log);
+                        const { title, details, error } = formatLogMessage(log);
                         return (
                           <div 
                             key={log.id} 
@@ -495,6 +509,14 @@ export function CronJobsTable() {
                                   </span>
                                 </div>
                                 <p className="text-sm font-medium">{title}</p>
+                                {error && (
+                                  <div className="mt-2 p-2 bg-destructive/10 border border-destructive/20 rounded-md">
+                                    <p className="text-sm text-destructive font-medium flex items-start gap-2">
+                                      <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                                      <span className="break-words">{error}</span>
+                                    </p>
+                                  </div>
+                                )}
                                 {details.length > 0 && (
                                   <div className="flex flex-wrap gap-2 mt-2">
                                     {details.map((detail, idx) => (
