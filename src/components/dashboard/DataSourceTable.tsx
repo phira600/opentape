@@ -30,7 +30,8 @@ import {
   SheetDescription,
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon, Info, FileText, Copy, ExternalLink } from "lucide-react";
+import { ResizablePanelGroup, ResizablePanel } from "@/components/ui/resizable";
+import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon, Info, FileText, Copy, ExternalLink, AlertTriangle, ChevronRight } from "lucide-react";
 import { formatDistanceToNow, addSeconds, format, subDays, startOfDay } from "date-fns";
 
 interface ActivityLogEntry {
@@ -145,6 +146,56 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
       default:
         return "outline";
     }
+  };
+
+  const getLogIcon = (logType: string) => {
+    switch (logType) {
+      case "success":
+        return <CheckCircle2 className="h-4 w-4 text-green-500" />;
+      case "error":
+        return <AlertCircle className="h-4 w-4 text-destructive" />;
+      case "warning":
+        return <AlertTriangle className="h-4 w-4 text-yellow-500" />;
+      default:
+        return <Info className="h-4 w-4 text-blue-500" />;
+    }
+  };
+
+  const formatLogMessage = (log: ActivityLogEntry): { title: string; details: string[] } => {
+    const details: string[] = [];
+    let title = log.message;
+    
+    if (log.details && typeof log.details === "object" && log.details !== null) {
+      const d = log.details as Record<string, unknown>;
+      
+      if (d.files_processed !== undefined) {
+        details.push(`${Number(d.files_processed).toLocaleString()} files processed`);
+      }
+      if (d.trades_count !== undefined) {
+        details.push(`${Number(d.trades_count).toLocaleString()} trades`);
+      }
+      if (d.new_trades !== undefined) {
+        details.push(`${Number(d.new_trades).toLocaleString()} new trades`);
+      }
+      if (d.skipped_files !== undefined && Number(d.skipped_files) > 0) {
+        details.push(`${Number(d.skipped_files)} skipped`);
+      }
+      if (d.duration_ms !== undefined) {
+        const secs = Math.round(Number(d.duration_ms) / 1000);
+        details.push(`${secs}s duration`);
+      }
+      if (d.source_type) {
+        details.push(`Type: ${d.source_type}`);
+      }
+      if (d.venue) {
+        details.push(`Venue: ${d.venue}`);
+      }
+      if (d.error && typeof d.error === "string") {
+        details.push(`Error: ${d.error.substring(0, 50)}${d.error.length > 50 ? "..." : ""}`);
+      }
+    }
+    
+    return { title, details };
   };
 
   useEffect(() => {
@@ -964,64 +1015,97 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
         </Table>
       </div>
 
-      {/* Job Logs Drawer */}
+      {/* Job Logs Drawer - Resizable */}
       <Sheet 
         open={!!selectedJobForLogs} 
         onOpenChange={(open) => !open && setSelectedJobForLogs(null)}
       >
-        <SheetContent className="w-[500px] sm:w-[600px]">
-          <SheetHeader>
-            <SheetTitle>{selectedJobForLogs?.name} - Activity Logs</SheetTitle>
-            <SheetDescription>Recent activity for this job (last 100 entries)</SheetDescription>
+        <SheetContent 
+          className="w-[700px] sm:w-[800px] sm:max-w-[90vw] p-0 flex flex-col"
+          style={{ maxWidth: "90vw" }}
+        >
+          <SheetHeader className="px-6 pt-6 pb-4 border-b">
+            <SheetTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              {selectedJobForLogs?.name}
+            </SheetTitle>
+            <SheetDescription>
+              Recent activity logs for this fetch job (last 100 entries)
+            </SheetDescription>
           </SheetHeader>
-          <ScrollArea className="h-[calc(100vh-140px)] mt-4">
-            {isLoadingLogs ? (
-              <div className="flex items-center justify-center py-8">
-                <Loader2 className="h-6 w-6 animate-spin text-primary" />
-              </div>
-            ) : jobLogs.length === 0 ? (
-              <p className="text-center text-muted-foreground py-8">
-                No logs found for this job.
-              </p>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead className="w-[80px]">Type</TableHead>
-                    <TableHead>Message</TableHead>
-                    <TableHead className="w-[100px]">Time</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {jobLogs.map((log) => (
-                    <TableRow key={log.id}>
-                      <TableCell>
-                        <Badge
-                          variant={getLogBadgeVariant(log.log_type) as "default" | "destructive" | "outline" | "secondary"}
-                          className={log.log_type === "success" ? "bg-green-500" : ""}
-                        >
-                          {log.log_type}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <p className="text-sm">{log.message}</p>
-                        {log.details && (
-                          <pre className="text-xs text-muted-foreground mt-1 max-w-[350px] overflow-x-auto">
-                            {JSON.stringify(log.details, null, 2)}
-                          </pre>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <span className="text-xs text-muted-foreground">
-                          {formatDistanceToNow(new Date(log.created_at), { addSuffix: true })}
-                        </span>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </ScrollArea>
+          
+          <div className="flex-1 overflow-hidden">
+            <ResizablePanelGroup direction="vertical" className="h-full">
+              <ResizablePanel defaultSize={100} minSize={30}>
+                <ScrollArea className="h-full">
+                  {isLoadingLogs ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    </div>
+                  ) : jobLogs.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center px-6">
+                      <FileText className="h-12 w-12 text-muted-foreground/50 mb-4" />
+                      <p className="text-muted-foreground">
+                        No logs found for this job.
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Logs will appear after the job runs.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {jobLogs.map((log) => {
+                        const { title, details } = formatLogMessage(log);
+                        return (
+                          <div 
+                            key={log.id} 
+                            className="px-6 py-4 hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="mt-0.5">
+                                {getLogIcon(log.log_type)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge 
+                                    variant={getLogBadgeVariant(log.log_type) as "default" | "destructive" | "outline" | "secondary"}
+                                    className={`text-xs ${log.log_type === "success" ? "bg-green-500" : ""}`}
+                                  >
+                                    {log.log_type}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    {format(new Date(log.created_at), "MMM d, HH:mm:ss")}
+                                    <span className="text-muted-foreground/60">
+                                      ({formatDistanceToNow(new Date(log.created_at), { addSuffix: true })})
+                                    </span>
+                                  </span>
+                                </div>
+                                <p className="text-sm font-medium">{title}</p>
+                                {details.length > 0 && (
+                                  <div className="flex flex-wrap gap-2 mt-2">
+                                    {details.map((detail, idx) => (
+                                      <span 
+                                        key={idx}
+                                        className="inline-flex items-center gap-1 text-xs bg-muted px-2 py-1 rounded-md"
+                                      >
+                                        <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                                        {detail}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </ScrollArea>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </div>
         </SheetContent>
       </Sheet>
     </div>
