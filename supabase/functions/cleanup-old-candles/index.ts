@@ -43,6 +43,14 @@ Deno.serve(async (req) => {
     
     console.log(`Starting batched cleanup of candles older than ${retentionDays} days (before ${cutoffDate.toISOString()})...`)
 
+    // Log start to activity_logs
+    await supabase.from('activity_logs').insert({
+      job_id: null,
+      log_type: 'info',
+      message: `Starting cleanup of candles older than ${retentionDays} days`,
+      details: { retention_days: retentionDays, cutoff_date: cutoffDate.toISOString() }
+    })
+
     let totalDeleted = 0
     let batchCount = 0
     let lastBatchCount = 0
@@ -99,6 +107,20 @@ Deno.serve(async (req) => {
       })
       .eq('id', 'cleanup-old-candles')
 
+    // Log success to activity_logs
+    await supabase.from('activity_logs').insert({
+      job_id: null,
+      log_type: 'success',
+      message: `Cleanup complete: ${totalDeleted.toLocaleString()} candles deleted`,
+      details: { 
+        deleted_count: totalDeleted, 
+        remaining_count: remainingCount, 
+        batches: batchCount,
+        retention_days: retentionDays,
+        hit_limit: hitLimit
+      }
+    })
+
     const message = hitLimit
       ? `Deleted ${totalDeleted.toLocaleString()} candles. ${remainingCount.toLocaleString()} remaining - run again to continue.`
       : totalDeleted > 0
@@ -121,6 +143,18 @@ Deno.serve(async (req) => {
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error(`Cleanup error: ${errorMessage}`)
+
+    // Log error to activity_logs
+    try {
+      await supabase.from('activity_logs').insert({
+        job_id: null,
+        log_type: 'error',
+        message: `Cleanup failed: ${errorMessage}`,
+        details: { error: errorMessage }
+      })
+    } catch (logError) {
+      console.error('Failed to log error:', logError)
+    }
 
     // Update error status in configuration
     try {
