@@ -33,12 +33,12 @@ interface ActivityLogEntry {
   created_at: string;
 }
 
-// Map cron job IDs to keywords for log searching
+// Map cron job IDs to keywords for log searching - use unique phrases to avoid cross-matching
 const CRON_JOB_LOG_KEYWORDS: Record<string, string[]> = {
-  "cleanup-old-trades": ["cleanup", "trades", "deleted"],
-  "cleanup-old-candles": ["cleanup", "candles", "deleted"],
-  "recreate-candles": ["candle", "backfill", "recreate"],
-  "fetch-symbology": ["symbology", "symbol"],
+  "cleanup-old-trades": ["trades older than", "trades deleted"],
+  "cleanup-old-candles": ["candles older than", "candles deleted"],
+  "recreate-candles": ["backfill", "recreate"],
+  "fetch-symbology": ["symbology"],
   "provision-cron-jobs": ["cron", "provision"],
 };
 
