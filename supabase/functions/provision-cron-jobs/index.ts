@@ -68,19 +68,19 @@ const CRON_JOBS: CronJobDefinition[] = [
     body: { source_type: 'nasdaq' },
     description: 'Fetches trade files from Nasdaq Nordic'
   },
-  // Maintenance jobs - running every 4 hours to clear backlog faster
+  // Maintenance jobs - running every 2 hours to match UI config
   {
     name: 'cleanup-old-trades-daily',
-    schedule: '0 */4 * * *',
+    schedule: '0 */2 * * *',
     function_name: 'cleanup-old-trades',
-    description: 'Cleans up old trades based on retention settings (every 4 hours)',
+    description: 'Cleans up old trades based on retention settings (every 2 hours)',
     config_id: 'cleanup-old-trades'  // Maps to cron_job_configurations.id
   },
   {
     name: 'cleanup-old-candles-daily',
-    schedule: '0 */4 * * *',
+    schedule: '0 */2 * * *',
     function_name: 'cleanup-old-candles',
-    description: 'Cleans up old candles based on retention settings (every 4 hours)',
+    description: 'Cleans up old candles based on retention settings (every 2 hours)',
     config_id: 'cleanup-old-candles'  // Maps to cron_job_configurations.id
   },
   {
