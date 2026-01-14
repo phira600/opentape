@@ -303,33 +303,6 @@ export type Database = {
         }
         Relationships: []
       }
-      mv_refresh_log: {
-        Row: {
-          id: string
-          last_trade_id: string | null
-          refresh_duration_ms: number | null
-          refreshed_at: string
-          rows_count: number | null
-          view_name: string
-        }
-        Insert: {
-          id?: string
-          last_trade_id?: string | null
-          refresh_duration_ms?: number | null
-          refreshed_at?: string
-          rows_count?: number | null
-          view_name: string
-        }
-        Update: {
-          id?: string
-          last_trade_id?: string | null
-          refresh_duration_ms?: number | null
-          refreshed_at?: string
-          rows_count?: number | null
-          view_name?: string
-        }
-        Relationships: []
-      }
       processed_files: {
         Row: {
           file_hash: string
