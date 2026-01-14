@@ -867,7 +867,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                       <Button variant="ghost" size="sm" className="h-auto p-1 font-normal">
                         <span className="text-sm text-muted-foreground">
                           {parseCronSchedule(cronJob.schedule)}
-                          {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles") && cronJob.retention_days && (
+                          {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles" || cronJob.id === "cleanup-old-activity-logs" || cronJob.id === "cleanup-old-processed-files") && cronJob.retention_days && (
                             <span className="ml-1">({cronJob.retention_days}d)</span>
                           )}
                         </span>
@@ -895,7 +895,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                           </div>
                         </div>
 
-                        {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles") && (
+                        {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles" || cronJob.id === "cleanup-old-activity-logs" || cronJob.id === "cleanup-old-processed-files") && (
                           <div className="space-y-2">
                             <Label className="text-sm">Retention Period (days)</Label>
                             <Input
