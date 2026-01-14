@@ -29,3 +29,9 @@ verify_jwt = false
 
 [functions.cleanup-old-candles]
 verify_jwt = false
+
+[functions.cleanup-old-activity-logs]
+verify_jwt = false
+
+[functions.cleanup-old-processed-files]
+verify_jwt = false

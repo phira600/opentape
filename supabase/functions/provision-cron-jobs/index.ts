@@ -84,6 +84,20 @@ const CRON_JOBS: CronJobDefinition[] = [
     config_id: 'cleanup-old-candles'  // Maps to cron_job_configurations.id
   },
   {
+    name: 'cleanup-old-activity-logs-job',
+    schedule: '0 */2 * * *',
+    function_name: 'cleanup-old-activity-logs',
+    description: 'Cleans up old activity logs based on retention settings (every 2 hours)',
+    config_id: 'cleanup-old-activity-logs'  // Maps to cron_job_configurations.id
+  },
+  {
+    name: 'cleanup-old-processed-files-job',
+    schedule: '0 */2 * * *',
+    function_name: 'cleanup-old-processed-files',
+    description: 'Cleans up old processed file records based on retention settings (every 2 hours)',
+    config_id: 'cleanup-old-processed-files'  // Maps to cron_job_configurations.id
+  },
+  {
     name: 'cboe-sis-symbology-daily',
     schedule: '0 8 * * 1-5',
     function_name: 'fetch-symbology',

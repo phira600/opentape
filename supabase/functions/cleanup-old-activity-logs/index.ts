@@ -1,0 +1,178 @@
+import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+}
+
+const BATCH_SIZE = 20000  // Delete 20k rows per batch
+const MAX_BATCHES = 150   // Max 150 batches per run (3M rows max per invocation)
+
+Deno.serve(async (req) => {
+  if (req.method === 'OPTIONS') {
+    return new Response(null, { headers: corsHeaders })
+  }
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!
+  const supabase = createClient(supabaseUrl, supabaseServiceKey)
+
+  try {
+    // Check if job is enabled and get retention settings
+    const { data: config, error: configError } = await supabase
+      .from('cron_job_configurations')
+      .select('is_enabled, retention_days')
+      .eq('id', 'cleanup-old-activity-logs')
+      .single()
+
+    if (configError) {
+      console.log(`Config error: ${configError.message}`)
+    }
+
+    if (!config?.is_enabled) {
+      console.log('Cleanup job is disabled, skipping execution')
+      return new Response(
+        JSON.stringify({ success: true, message: 'Job is disabled', deleted_count: 0 }),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const retentionDays = config?.retention_days || 30
+    const cutoffDate = new Date()
+    cutoffDate.setDate(cutoffDate.getDate() - retentionDays)
+    
+    console.log(`Starting batched cleanup of activity logs older than ${retentionDays} days (before ${cutoffDate.toISOString()})...`)
+
+    // Log start to activity_logs (with unique message for this job)
+    await supabase.from('activity_logs').insert({
+      job_id: null,
+      log_type: 'info',
+      message: `Starting cleanup of activity logs older than ${retentionDays} days`,
+      details: { retention_days: retentionDays, cutoff_date: cutoffDate.toISOString() }
+    })
+
+    let totalDeleted = 0
+    let batchCount = 0
+    let lastBatchCount = 0
+
+    // Delete in batches to avoid timeouts
+    while (batchCount < MAX_BATCHES) {
+      const { data, error } = await supabase.rpc('cleanup_old_activity_logs_batch', {
+        cutoff_date: cutoffDate.toISOString(),
+        batch_size: BATCH_SIZE
+      })
+
+      if (error) {
+        throw new Error(`Batch ${batchCount + 1} failed: ${error.message}`)
+      }
+
+      const deletedCount = data || 0
+      lastBatchCount = deletedCount
+      totalDeleted += deletedCount
+      batchCount++
+
+      console.log(`Batch ${batchCount}: Deleted ${deletedCount} activity logs (total: ${totalDeleted})`)
+
+      // If we deleted less than batch size, we're done
+      if (deletedCount < BATCH_SIZE) {
+        break
+      }
+    }
+
+    // Check if we hit the limit (more work may remain)
+    const hitLimit = batchCount >= MAX_BATCHES && lastBatchCount === BATCH_SIZE
+
+    // Get remaining count of old activity logs
+    let remainingCount = 0
+    if (hitLimit || totalDeleted > 0) {
+      const { count, error: countError } = await supabase
+        .from('activity_logs')
+        .select('*', { count: 'exact', head: true })
+        .lt('created_at', cutoffDate.toISOString())
+      
+      if (!countError) {
+        remainingCount = count || 0
+      }
+    }
+
+    console.log(`Cleanup complete. Deleted ${totalDeleted} activity logs in ${batchCount} batches. Remaining: ${remainingCount}`)
+
+    // Update cron job configuration with success status
+    await supabase
+      .from('cron_job_configurations')
+      .update({
+        last_run_at: new Date().toISOString(),
+        last_status: 'success',
+        last_error: null
+      })
+      .eq('id', 'cleanup-old-activity-logs')
+
+    // Log success to activity_logs
+    await supabase.from('activity_logs').insert({
+      job_id: null,
+      log_type: 'success',
+      message: `Cleanup complete: ${totalDeleted.toLocaleString()} activity logs deleted`,
+      details: { 
+        deleted_count: totalDeleted, 
+        remaining_count: remainingCount, 
+        batches: batchCount,
+        retention_days: retentionDays,
+        hit_limit: hitLimit
+      }
+    })
+
+    const message = hitLimit
+      ? `Deleted ${totalDeleted.toLocaleString()} activity logs. ${remainingCount.toLocaleString()} remaining - run again to continue.`
+      : totalDeleted > 0
+        ? `Cleanup complete. Deleted ${totalDeleted.toLocaleString()} activity logs.`
+        : 'No old activity logs to clean up.'
+
+    return new Response(
+      JSON.stringify({ 
+        success: true, 
+        deleted_count: totalDeleted,
+        remaining_count: remainingCount,
+        hit_limit: hitLimit,
+        batches: batchCount,
+        retention_days: retentionDays,
+        message
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    console.error(`Cleanup error: ${errorMessage}`)
+
+    // Log error to activity_logs
+    try {
+      await supabase.from('activity_logs').insert({
+        job_id: null,
+        log_type: 'error',
+        message: `Activity logs cleanup failed: ${errorMessage}`,
+        details: { error: errorMessage }
+      })
+    } catch (logError) {
+      console.error('Failed to log error:', logError)
+    }
+
+    // Update error status in configuration
+    try {
+      await supabase
+        .from('cron_job_configurations')
+        .update({
+          last_run_at: new Date().toISOString(),
+          last_status: 'error',
+          last_error: errorMessage
+        })
+        .eq('id', 'cleanup-old-activity-logs')
+    } catch (updateError) {
+      console.error('Failed to update error status:', updateError)
+    }
+
+    return new Response(
+      JSON.stringify({ success: false, error: errorMessage }),
+      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    )
+  }
+})
