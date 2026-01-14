@@ -140,14 +140,6 @@ Deno.serve(async (req) => {
 
     const duration = Date.now() - startTime
 
-    // Log the refresh
-    await supabase.from('mv_refresh_log').insert({
-      view_name: 'candles_1min',
-      refreshed_at: new Date().toISOString(),
-      refresh_duration_ms: duration,
-      rows_count: result.candleCount
-    })
-
     // Update status to success
     await supabase
       .from('cron_job_configurations')
