@@ -37,6 +37,8 @@ interface ActivityLogEntry {
 const CRON_JOB_LOG_KEYWORDS: Record<string, string[]> = {
   "cleanup-old-trades": ["trades older than", "trades deleted"],
   "cleanup-old-candles": ["candles older than", "candles deleted"],
+  "cleanup-old-activity-logs": ["activity logs older than", "activity logs deleted"],
+  "cleanup-old-processed-files": ["processed files older than", "processed files deleted"],
   "recreate-candles": ["backfill", "recreate"],
   "fetch-symbology": ["symbology"],
   "provision-cron-jobs": ["cron", "provision"],

@@ -468,6 +468,10 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      cleanup_old_activity_logs_batch: {
+        Args: { batch_size?: number; cutoff_date: string }
+        Returns: number
+      }
       cleanup_old_candles_batch: {
         Args: { batch_size?: number; cutoff_date: string }
         Returns: number

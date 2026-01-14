@@ -243,7 +243,10 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     const updateData: { schedule: string; retention_days?: number } = { schedule: scheduleValue };
     
     // Include retention_days for cleanup jobs
-    if (cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles") {
+    if (cronJob.id === "cleanup-old-trades" || 
+        cronJob.id === "cleanup-old-candles" ||
+        cronJob.id === "cleanup-old-activity-logs" ||
+        cronJob.id === "cleanup-old-processed-files") {
       updateData.retention_days = retentionDays;
     }
 
