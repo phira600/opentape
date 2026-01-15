@@ -4,7 +4,7 @@ import { Header } from "@/components/dashboard/Header";
 import { StatsCards } from "@/components/dashboard/StatsCards";
 import { DataSourceTable } from "@/components/dashboard/DataSourceTable";
 import { ActivityLog } from "@/components/dashboard/ActivityLog";
-import { CronJobsTable } from "@/components/dashboard/CronJobsTable";
+
 import { TradesTable } from "@/components/dashboard/TradesTable";
 import { SymbolExplorer } from "@/components/dashboard/SymbolExplorer";
 import { ProcessedFilesTable } from "@/components/dashboard/ProcessedFilesTable";
@@ -117,7 +117,6 @@ export default function Dashboard() {
           </TabsContent>
 
           <TabsContent value="logs" className="space-y-6">
-            <CronJobsTable />
             <div className="grid gap-6 lg:grid-cols-2">
               <ActivityLog />
               <ProcessedFilesTable />
