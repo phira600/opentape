@@ -86,6 +86,17 @@ interface CronJobConfiguration {
   retention_days?: number | null;
 }
 
+// Map cron job IDs to keywords for log searching
+const CRON_JOB_LOG_KEYWORDS: Record<string, string[]> = {
+  "cleanup-old-trades": ["trades older than", "trades deleted"],
+  "cleanup-old-candles": ["candles older than", "candles deleted"],
+  "cleanup-old-activity-logs": ["activity logs older than", "activity logs deleted"],
+  "cleanup-old-processed-files": ["processed files older than", "processed files deleted"],
+  "recreate-candles": ["backfill", "recreate"],
+  "fetch-symbology": ["symbology"],
+  "provision-cron-jobs": ["cron", "provision"],
+};
+
 export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSourceTableProps) {
   const { toast } = useToast();
   const [togglingId, setTogglingId] = useState<string | null>(null);
@@ -113,6 +124,11 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
   const [jobLogs, setJobLogs] = useState<ActivityLogEntry[]>([]);
   const [isLoadingLogs, setIsLoadingLogs] = useState(false);
 
+  // Cron job logs drawer state
+  const [selectedCronJobForLogs, setSelectedCronJobForLogs] = useState<CronJobConfiguration | null>(null);
+  const [cronJobLogs, setCronJobLogs] = useState<ActivityLogEntry[]>([]);
+  const [isLoadingCronLogs, setIsLoadingCronLogs] = useState(false);
+
   const fetchJobLogs = async (job: JobConfiguration) => {
     setSelectedJobForLogs(job);
     setIsLoadingLogs(true);
@@ -125,6 +141,28 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     
     setJobLogs(data || []);
     setIsLoadingLogs(false);
+  };
+
+  const fetchCronJobLogs = async (cronJob: CronJobConfiguration) => {
+    setSelectedCronJobForLogs(cronJob);
+    setIsLoadingCronLogs(true);
+    
+    const keywords = CRON_JOB_LOG_KEYWORDS[cronJob.id] || [cronJob.name.toLowerCase()];
+    
+    const { data } = await supabase
+      .from("activity_logs")
+      .select("*")
+      .is("job_id", null) // Cron jobs don't have a job_id
+      .order("created_at", { ascending: false })
+      .limit(200);
+    
+    const filteredLogs = (data || []).filter((log: ActivityLogEntry) => {
+      const messageLower = log.message.toLowerCase();
+      return keywords.some(kw => messageLower.includes(kw.toLowerCase()));
+    }).slice(0, 100);
+    
+    setCronJobLogs(filteredLogs);
+    setIsLoadingCronLogs(false);
   };
 
   const copyToClipboard = (text: string) => {
@@ -161,12 +199,18 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     }
   };
 
-  const formatLogMessage = (log: ActivityLogEntry): { title: string; details: string[] } => {
+  const formatLogMessage = (log: ActivityLogEntry): { title: string; details: string[]; error?: string } => {
     const details: string[] = [];
     let title = log.message;
+    let error: string | undefined;
     
     if (log.details && typeof log.details === "object" && log.details !== null) {
       const d = log.details as Record<string, unknown>;
+      
+      // Extract error message if present
+      if (d.error && typeof d.error === "string") {
+        error = d.error;
+      }
       
       if (d.files_processed !== undefined) {
         details.push(`${Number(d.files_processed).toLocaleString()} files processed`);
@@ -180,22 +224,47 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
       if (d.skipped_files !== undefined && Number(d.skipped_files) > 0) {
         details.push(`${Number(d.skipped_files)} skipped`);
       }
+      if (d.deleted_count !== undefined) {
+        details.push(`${Number(d.deleted_count).toLocaleString()} deleted`);
+      }
+      if (d.remaining_count !== undefined && Number(d.remaining_count) > 0) {
+        details.push(`${Number(d.remaining_count).toLocaleString()} remaining`);
+      }
+      if (d.count !== undefined) {
+        details.push(`${Number(d.count).toLocaleString()} items processed`);
+      }
+      if (d.candle_count !== undefined) {
+        details.push(`${Number(d.candle_count).toLocaleString()} candles`);
+      }
+      if (d.trade_count !== undefined) {
+        details.push(`${Number(d.trade_count).toLocaleString()} trades`);
+      }
       if (d.duration_ms !== undefined) {
         const secs = Math.round(Number(d.duration_ms) / 1000);
         details.push(`${secs}s duration`);
       }
+      if (d.elapsed_ms !== undefined) {
+        const secs = Math.round(Number(d.elapsed_ms) / 1000);
+        details.push(`${secs}s elapsed`);
+      }
+      if (d.from_date && d.to_date) {
+        details.push(`${d.from_date} → ${d.to_date}`);
+      }
       if (d.source_type) {
         details.push(`Type: ${d.source_type}`);
+      }
+      if (d.source) {
+        details.push(`Source: ${d.source}`);
       }
       if (d.venue) {
         details.push(`Venue: ${d.venue}`);
       }
-      if (d.error && typeof d.error === "string") {
-        details.push(`Error: ${d.error.substring(0, 50)}${d.error.length > 50 ? "..." : ""}`);
+      if (d.errors !== undefined && Number(d.errors) > 0) {
+        details.push(`${d.errors} errors`);
       }
     }
     
-    return { title, details };
+    return { title, details, error };
   };
 
   useEffect(() => {
@@ -999,18 +1068,29 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                   />
                 </TableCell>
                 <TableCell className="text-right">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handleRunCronJob(cronJob)}
-                    disabled={runningCronId === cronJob.id}
-                  >
-                    {runningCronId === cronJob.id ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <RefreshCw className="h-4 w-4" />
-                    )}
-                  </Button>
+                  <div className="flex items-center justify-end gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => fetchCronJobLogs(cronJob)}
+                      title="View logs"
+                    >
+                      <FileText className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => handleRunCronJob(cronJob)}
+                      disabled={runningCronId === cronJob.id}
+                      title="Run now"
+                    >
+                      {runningCronId === cronJob.id ? (
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                      ) : (
+                        <RefreshCw className="h-4 w-4" />
+                      )}
+                    </Button>
+                  </div>
                 </TableCell>
               </TableRow>
             ))}
@@ -1058,7 +1138,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                   ) : (
                     <div className="divide-y">
                       {jobLogs.map((log) => {
-                        const { title, details } = formatLogMessage(log);
+                        const { title, details, error } = formatLogMessage(log);
                         return (
                           <div 
                             key={log.id} 
@@ -1085,6 +1165,124 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                                   </span>
                                 </div>
                                 <p className="text-sm font-medium">{title}</p>
+                                {error && (
+                                  <div className="mt-2 p-2 bg-destructive/10 border border-destructive/20 rounded-md">
+                                    <p className="text-sm text-destructive font-medium flex items-start gap-2">
+                                      <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                                      <span className="break-words">{error}</span>
+                                    </p>
+                                  </div>
+                                )}
+                                {details.length > 0 && (
+                                  <div className="flex flex-wrap gap-2 mt-2">
+                                    {details.map((detail, idx) => (
+                                      <span 
+                                        key={idx}
+                                        className="inline-flex items-center gap-1 text-xs bg-muted px-2 py-1 rounded-md"
+                                      >
+                                        <ChevronRight className="h-3 w-3 text-muted-foreground" />
+                                        {detail}
+                                      </span>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </ScrollArea>
+              </ResizablePanel>
+            </ResizablePanelGroup>
+          </div>
+        </SheetContent>
+      </Sheet>
+
+      {/* Cron Job Logs Drawer */}
+      <Sheet 
+        open={!!selectedCronJobForLogs} 
+        onOpenChange={(open) => !open && setSelectedCronJobForLogs(null)}
+      >
+        <SheetContent 
+          className="w-[700px] sm:w-[800px] sm:max-w-[90vw] p-0 flex flex-col"
+          style={{ maxWidth: "90vw" }}
+        >
+          <SheetHeader className="px-6 pt-6 pb-4 border-b">
+            <SheetTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              {selectedCronJobForLogs?.name}
+            </SheetTitle>
+            <SheetDescription>
+              Recent activity logs for this cron job
+            </SheetDescription>
+            {selectedCronJobForLogs?.last_error && (
+              <div className="mt-3 p-3 bg-destructive/10 border border-destructive/20 rounded-md">
+                <p className="text-sm text-destructive font-medium flex items-start gap-2">
+                  <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                  <span className="break-words">{selectedCronJobForLogs.last_error}</span>
+                </p>
+              </div>
+            )}
+          </SheetHeader>
+          
+          <div className="flex-1 overflow-hidden">
+            <ResizablePanelGroup direction="vertical" className="h-full">
+              <ResizablePanel defaultSize={100} minSize={30}>
+                <ScrollArea className="h-full">
+                  {isLoadingCronLogs ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader2 className="h-6 w-6 animate-spin text-primary" />
+                    </div>
+                  ) : cronJobLogs.length === 0 ? (
+                    <div className="flex flex-col items-center justify-center py-12 text-center px-6">
+                      <FileText className="h-12 w-12 text-muted-foreground/50 mb-4" />
+                      <p className="text-muted-foreground">
+                        No logs found for this job.
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Logs will appear after the job runs.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="divide-y">
+                      {cronJobLogs.map((log) => {
+                        const { title, details, error } = formatLogMessage(log);
+                        return (
+                          <div 
+                            key={log.id} 
+                            className="px-6 py-4 hover:bg-muted/50 transition-colors"
+                          >
+                            <div className="flex items-start gap-3">
+                              <div className="mt-0.5">
+                                {getLogIcon(log.log_type)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 mb-1">
+                                  <Badge 
+                                    variant={getLogBadgeVariant(log.log_type) as "default" | "destructive" | "outline" | "secondary"}
+                                    className={`text-xs ${log.log_type === "success" ? "bg-green-500" : ""}`}
+                                  >
+                                    {log.log_type}
+                                  </Badge>
+                                  <span className="text-xs text-muted-foreground flex items-center gap-1">
+                                    <Clock className="h-3 w-3" />
+                                    {format(new Date(log.created_at), "MMM d, HH:mm:ss")}
+                                    <span className="text-muted-foreground/60">
+                                      ({formatDistanceToNow(new Date(log.created_at), { addSuffix: true })})
+                                    </span>
+                                  </span>
+                                </div>
+                                <p className="text-sm font-medium">{title}</p>
+                                {error && (
+                                  <div className="mt-2 p-2 bg-destructive/10 border border-destructive/20 rounded-md">
+                                    <p className="text-sm text-destructive font-medium flex items-start gap-2">
+                                      <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
+                                      <span className="break-words">{error}</span>
+                                    </p>
+                                  </div>
+                                )}
                                 {details.length > 0 && (
                                   <div className="flex flex-wrap gap-2 mt-2">
                                     {details.map((detail, idx) => (
