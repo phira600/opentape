@@ -73,28 +73,28 @@ const CRON_JOBS: CronJobDefinition[] = [
     name: 'cleanup-old-trades-daily',
     schedule: '0 */2 * * *',
     function_name: 'cleanup-old-trades',
-    description: 'Cleans up old trades based on retention settings (every 2 hours)',
+    description: 'Trades cleanup based on retention settings (every 2 hours)',
     config_id: 'cleanup-old-trades'  // Maps to cron_job_configurations.id
   },
   {
     name: 'cleanup-old-candles-daily',
     schedule: '0 */2 * * *',
     function_name: 'cleanup-old-candles',
-    description: 'Cleans up old candles based on retention settings (every 2 hours)',
+    description: 'Candles cleanup based on retention settings (every 2 hours)',
     config_id: 'cleanup-old-candles'  // Maps to cron_job_configurations.id
   },
   {
     name: 'cleanup-old-activity-logs-job',
     schedule: '0 */2 * * *',
     function_name: 'cleanup-old-activity-logs',
-    description: 'Cleans up old activity logs based on retention settings (every 2 hours)',
+    description: 'Activity Logs cleanup based on retention settings (every 2 hours)',
     config_id: 'cleanup-old-activity-logs'  // Maps to cron_job_configurations.id
   },
   {
     name: 'cleanup-old-processed-files-job',
     schedule: '0 */2 * * *',
     function_name: 'cleanup-old-processed-files',
-    description: 'Cleans up old processed file records based on retention settings (every 2 hours)',
+    description: 'Processed Files cleanup based on retention settings (every 2 hours)',
     config_id: 'cleanup-old-processed-files'  // Maps to cron_job_configurations.id
   },
   {
