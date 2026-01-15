@@ -33,7 +33,7 @@ Replace `YOUR_PROJECT_ID` with your Supabase project ID.
 
 **Cron Jobs** (via `provision-cron-jobs`):
 - `fetch-trade-files-weekdays`: Fetches trades every minute on weekdays
-- `cleanup-old-trades-daily`: Cleans up old data daily at midnight
+- `cleanup-old-trades-daily`: Trades cleanup daily
 - `refresh-candles-5min`: Refreshes price candles every 5 minutes
 - `cboe-sis-symbology-daily`: Updates symbol data at 8 AM UTC on weekdays
 
