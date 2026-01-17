@@ -1,89 +1,14 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type, x-api-key',
-}
-
-// In-memory LRU cache for API key validation
-const API_KEY_CACHE = new Map<string, { valid: boolean; keyId: string | null; expires: number }>();
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_CACHE_SIZE = 100;
-
-declare const EdgeRuntime: { waitUntil: (promise: Promise<any>) => void };
-
-async function validateApiKey(supabase: any, apiKey: string): Promise<{ valid: boolean; keyId: string | null }> {
-  if (!apiKey) return { valid: false, keyId: null };
-  
-  const cached = API_KEY_CACHE.get(apiKey);
-  if (cached && cached.expires > Date.now()) {
-    if (cached.valid && cached.keyId) {
-      EdgeRuntime.waitUntil(
-        supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", cached.keyId)
-      );
-    }
-    return { valid: cached.valid, keyId: cached.keyId };
-  }
-  
-  const encoder = new TextEncoder();
-  const data = encoder.encode(apiKey);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  
-  const { data: keyData, error } = await supabase
-    .from("api_keys")
-    .select("id, is_active")
-    .eq("key_hash", keyHash)
-    .eq("is_active", true)
-    .maybeSingle();
-  
-  const isValid = !error && !!keyData;
-  
-  if (API_KEY_CACHE.size >= MAX_CACHE_SIZE) {
-    const oldestKey = API_KEY_CACHE.keys().next().value;
-    if (oldestKey) API_KEY_CACHE.delete(oldestKey);
-  }
-  
-  API_KEY_CACHE.set(apiKey, { 
-    valid: isValid, 
-    keyId: keyData?.id || null, 
-    expires: Date.now() + CACHE_TTL_MS 
-  });
-  
-  if (isValid && keyData?.id) {
-    EdgeRuntime.waitUntil(
-      supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyData.id)
-    );
-  }
-  
-  return { valid: isValid, keyId: keyData?.id || null };
-}
-
-async function checkIpWhitelist(supabase: any, keyId: string, clientIp: string): Promise<boolean> {
-  const { data: whitelist, error } = await supabase
-    .from("api_key_ip_whitelist")
-    .select("ip_address")
-    .eq("api_key_id", keyId);
-  
-  if (error) {
-    console.error("IP whitelist check error:", error);
-    return true;
-  }
-  
-  if (!whitelist || whitelist.length === 0) {
-    return true;
-  }
-  
-  return whitelist.some((w: { ip_address: string }) => w.ip_address === clientIp);
-}
-
-function getClientIp(req: Request): string {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() 
-    || req.headers.get("cf-connecting-ip") 
-    || req.headers.get("x-real-ip")
-    || "unknown";
-}
+import { 
+  corsHeaders, 
+  validateApiKey, 
+  checkIpWhitelist, 
+  getClientIp,
+  getCachedResponse,
+  setCachedResponse,
+  errorResponse,
+  jsonResponse
+} from "../_shared/api-utils.ts";
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -100,22 +25,16 @@ Deno.serve(async (req) => {
     const { valid, keyId } = await validateApiKey(supabase, apiKey);
     
     if (!valid) {
-      return new Response(
-        JSON.stringify({ success: false, error: "Invalid or missing API key" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Invalid or missing API key", 401);
     }
 
-    // Check IP whitelist
+    // Check IP whitelist (now cached)
     const clientIp = getClientIp(req);
     if (keyId) {
       const ipAllowed = await checkIpWhitelist(supabase, keyId, clientIp);
       if (!ipAllowed) {
         console.log(`IP ${clientIp} not allowed for API key ${keyId}`);
-        return new Response(
-          JSON.stringify({ success: false, error: "IP address not allowed" }),
-          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return errorResponse("IP address not allowed", 403);
       }
     }
 
@@ -132,6 +51,14 @@ Deno.serve(async (req) => {
     const query = { ...params, ...body }
     
     console.log('Symbology query:', query)
+    
+    // Check response cache
+    const cacheKey = `symbology:${JSON.stringify(query)}`;
+    const cachedResponse = getCachedResponse(cacheKey);
+    if (cachedResponse) {
+      console.log(`Cache hit for symbology query`);
+      return jsonResponse(cachedResponse, true);
+    }
     
     // Build query
     let dbQuery = supabase
@@ -185,10 +112,7 @@ Deno.serve(async (req) => {
     
     if (error) {
       console.error('Query error:', error)
-      return new Response(
-        JSON.stringify({ success: false, error: error.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      )
+      return errorResponse(error.message, 500);
     }
     
     // Deduplicate by creating a flat structure grouped by ISIN
@@ -226,24 +150,22 @@ Deno.serve(async (req) => {
     
     const flatData = Array.from(deduped.values())
     
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        data: flatData,
-        count: flatData.length,
-        limit,
-        offset 
-      }),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    const responseData = { 
+      success: true, 
+      data: flatData,
+      count: flatData.length,
+      limit,
+      offset 
+    };
+    
+    // Cache the response
+    setCachedResponse(cacheKey, responseData);
+    
+    return jsonResponse(responseData, false);
     
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : 'Unknown error'
     console.error(`Function error: ${errorMessage}`)
-    
-    return new Response(
-      JSON.stringify({ success: false, error: errorMessage }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    )
+    return errorResponse(errorMessage, 500);
   }
 })

@@ -1,13 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-declare const EdgeRuntime: { waitUntil: (promise: Promise<any>) => void };
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-api-key",
-  "Cache-Control": "public, max-age=60",
-};
+import { 
+  corsHeaders, 
+  validateApiKey, 
+  checkIpWhitelist, 
+  getClientIp,
+  getCachedResponse,
+  setCachedResponse,
+  errorResponse,
+  jsonResponse
+} from "../_shared/api-utils.ts";
 
 interface QuoteResult {
   isin: string;
@@ -19,103 +21,6 @@ interface QuoteResult {
   open: number;
   volume: number;
   timestamp: string;
-}
-
-// In-memory LRU cache for API key validation
-const API_KEY_CACHE = new Map<string, { valid: boolean; keyId: string | null; expires: number }>();
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_CACHE_SIZE = 100;
-
-// In-memory response cache
-const RESPONSE_CACHE = new Map<string, { data: any; expires: number }>();
-const RESPONSE_CACHE_TTL_MS = 60 * 1000;
-
-function getCachedResponse(key: string): any | null {
-  const entry = RESPONSE_CACHE.get(key);
-  if (entry && entry.expires > Date.now()) return entry.data;
-  RESPONSE_CACHE.delete(key);
-  return null;
-}
-
-function setCachedResponse(key: string, data: any) {
-  if (RESPONSE_CACHE.size >= MAX_CACHE_SIZE) {
-    const oldestKey = RESPONSE_CACHE.keys().next().value;
-    if (oldestKey) RESPONSE_CACHE.delete(oldestKey);
-  }
-  RESPONSE_CACHE.set(key, { data, expires: Date.now() + RESPONSE_CACHE_TTL_MS });
-}
-
-async function validateApiKey(supabase: any, apiKey: string): Promise<{ valid: boolean; keyId: string | null }> {
-  if (!apiKey) return { valid: false, keyId: null };
-  
-  const cached = API_KEY_CACHE.get(apiKey);
-  if (cached && cached.expires > Date.now()) {
-    if (cached.valid && cached.keyId) {
-      EdgeRuntime.waitUntil(
-        supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", cached.keyId)
-      );
-    }
-    return { valid: cached.valid, keyId: cached.keyId };
-  }
-  
-  const encoder = new TextEncoder();
-  const data = encoder.encode(apiKey);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  
-  const { data: keyData, error } = await supabase
-    .from("api_keys")
-    .select("id, is_active")
-    .eq("key_hash", keyHash)
-    .eq("is_active", true)
-    .maybeSingle();
-  
-  const isValid = !error && !!keyData;
-  
-  if (API_KEY_CACHE.size >= MAX_CACHE_SIZE) {
-    const oldestKey = API_KEY_CACHE.keys().next().value;
-    if (oldestKey) API_KEY_CACHE.delete(oldestKey);
-  }
-  
-  API_KEY_CACHE.set(apiKey, { 
-    valid: isValid, 
-    keyId: keyData?.id || null, 
-    expires: Date.now() + CACHE_TTL_MS 
-  });
-  
-  if (isValid && keyData?.id) {
-    EdgeRuntime.waitUntil(
-      supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyData.id)
-    );
-  }
-  
-  return { valid: isValid, keyId: keyData?.id || null };
-}
-
-async function checkIpWhitelist(supabase: any, keyId: string, clientIp: string): Promise<boolean> {
-  const { data: whitelist, error } = await supabase
-    .from("api_key_ip_whitelist")
-    .select("ip_address")
-    .eq("api_key_id", keyId);
-  
-  if (error) {
-    console.error("IP whitelist check error:", error);
-    return true;
-  }
-  
-  if (!whitelist || whitelist.length === 0) {
-    return true;
-  }
-  
-  return whitelist.some((w: { ip_address: string }) => w.ip_address === clientIp);
-}
-
-function getClientIp(req: Request): string {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() 
-    || req.headers.get("cf-connecting-ip") 
-    || req.headers.get("x-real-ip")
-    || "unknown";
 }
 
 serve(async (req) => {
@@ -133,22 +38,16 @@ serve(async (req) => {
     const { valid, keyId } = await validateApiKey(supabase, apiKey);
     
     if (!valid) {
-      return new Response(
-        JSON.stringify({ error: "Invalid or missing API key" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Invalid or missing API key", 401);
     }
 
-    // Check IP whitelist
+    // Check IP whitelist (now cached)
     const clientIp = getClientIp(req);
     if (keyId) {
       const ipAllowed = await checkIpWhitelist(supabase, keyId, clientIp);
       if (!ipAllowed) {
         console.log(`IP ${clientIp} not allowed for API key ${keyId}`);
-        return new Response(
-          JSON.stringify({ error: "IP address not allowed" }),
-          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return errorResponse("IP address not allowed", 403);
       }
     }
 
@@ -163,120 +62,167 @@ serve(async (req) => {
     const { isins } = params;
 
     if (!isins) {
-      return new Response(
-        JSON.stringify({ error: "Missing required parameter: isins (format: ISIN:CURRENCY or comma-separated list)" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Missing required parameter: isins (format: ISIN:CURRENCY or comma-separated list)", 400);
     }
 
+    // Check response cache
     const cacheKey = `quotes:${isins}`;
     const cachedResponse = getCachedResponse(cacheKey);
     if (cachedResponse) {
       console.log(`Cache hit for ${cacheKey}`);
-      return new Response(
-        JSON.stringify(cachedResponse),
-        { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "HIT" } }
-      );
+      return jsonResponse(cachedResponse, true);
     }
 
     console.log(`Fetching quotes for: ${isins}`);
 
     // Parse ISIN:Currency pairs
-    const pairs: { isin: string; currency: string }[] = [];
     const isinList = isins.split(",").map((s: string) => s.trim());
+    const pairsWithCurrency: { isin: string; currency: string }[] = [];
+    const isinsWithoutCurrency: string[] = [];
     
     for (const item of isinList) {
       if (item.includes(":")) {
         const [isin, currency] = item.split(":");
-        pairs.push({ isin: isin.trim(), currency: currency.trim() });
+        pairsWithCurrency.push({ isin: isin.trim(), currency: currency.trim() });
       } else {
-        // ISIN without currency - look up from symbology
-        const { data: symData } = await supabase
-          .from("symbology")
-          .select("isin, currency")
-          .eq("isin", item.trim())
-          .not("currency", "is", null)
-          .limit(1)
-          .maybeSingle();
+        isinsWithoutCurrency.push(item.trim());
+      }
+    }
+
+    // Batch lookup for ISINs without currency (single query instead of N queries)
+    if (isinsWithoutCurrency.length > 0) {
+      const { data: symData } = await supabase
+        .from("symbology")
+        .select("isin, currency")
+        .in("isin", isinsWithoutCurrency)
+        .not("currency", "is", null);
+      
+      if (symData) {
+        // Create a map of ISIN to currency (use first found)
+        const isinCurrencyMap = new Map<string, string>();
+        for (const row of symData) {
+          if (!isinCurrencyMap.has(row.isin)) {
+            isinCurrencyMap.set(row.isin, row.currency);
+          }
+        }
         
-        if (symData) {
-          pairs.push({ isin: symData.isin, currency: symData.currency });
-        } else {
-          console.log(`No symbology found for ISIN ${item}, skipping`);
+        for (const isin of isinsWithoutCurrency) {
+          const currency = isinCurrencyMap.get(isin);
+          if (currency) {
+            pairsWithCurrency.push({ isin, currency });
+          } else {
+            console.log(`No symbology found for ISIN ${isin}, skipping`);
+          }
         }
       }
     }
 
-    if (pairs.length === 0) {
-      return new Response(
-        JSON.stringify({ quotes: [], count: 0, error: "No valid ISIN:Currency pairs found" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+    if (pairsWithCurrency.length === 0) {
+      return jsonResponse({ quotes: [], count: 0, error: "No valid ISIN:Currency pairs found" });
     }
 
-    console.log(`Processing ${pairs.length} ISIN:Currency pairs`);
+    console.log(`Processing ${pairsWithCurrency.length} ISIN:Currency pairs`);
 
-    // Get the latest candle for each pair from candles_1min
+    // Build OR conditions for batch queries
+    const allIsins = [...new Set(pairsWithCurrency.map(p => p.isin))];
+    const allCurrencies = [...new Set(pairsWithCurrency.map(p => p.currency))];
+    
+    const today = new Date();
+    const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0)).toISOString();
+
+    // Execute all queries in parallel (3 queries instead of 40+)
+    const [latestCandlesResult, dayCandlesResult, symbologyResult] = await Promise.all([
+      // Get latest candle for each ISIN:Currency pair
+      supabase
+        .from("candles_1min")
+        .select("symbol, currency, bucket, open, high, low, close, volume")
+        .in("symbol", allIsins)
+        .in("currency", allCurrencies)
+        .order("bucket", { ascending: false })
+        .limit(pairsWithCurrency.length * 2), // Get enough to find latest for each pair
+      
+      // Get day candles for aggregation
+      supabase
+        .from("candles_1min")
+        .select("symbol, currency, open, high, low, volume, bucket")
+        .in("symbol", allIsins)
+        .in("currency", allCurrencies)
+        .gte("bucket", startOfDay)
+        .order("bucket", { ascending: true }),
+      
+      // Get names from symbology
+      supabase
+        .from("symbology")
+        .select("isin, currency, name")
+        .in("isin", allIsins)
+    ]);
+
+    // Build lookup maps for efficient access
+    const latestCandleMap = new Map<string, any>();
+    if (latestCandlesResult.data) {
+      for (const candle of latestCandlesResult.data) {
+        const key = `${candle.symbol}:${candle.currency}`;
+        if (!latestCandleMap.has(key)) {
+          latestCandleMap.set(key, candle);
+        }
+      }
+    }
+
+    const dayCandlesMap = new Map<string, any[]>();
+    if (dayCandlesResult.data) {
+      for (const candle of dayCandlesResult.data) {
+        const key = `${candle.symbol}:${candle.currency}`;
+        if (!dayCandlesMap.has(key)) {
+          dayCandlesMap.set(key, []);
+        }
+        dayCandlesMap.get(key)!.push(candle);
+      }
+    }
+
+    const nameMap = new Map<string, string>();
+    if (symbologyResult.data) {
+      for (const row of symbologyResult.data) {
+        const key = `${row.isin}:${row.currency}`;
+        if (!nameMap.has(key) && row.name) {
+          nameMap.set(key, row.name);
+        }
+        // Also set by ISIN only as fallback
+        if (!nameMap.has(row.isin) && row.name) {
+          nameMap.set(row.isin, row.name);
+        }
+      }
+    }
+
+    // Build quotes from maps
     const quotes: QuoteResult[] = [];
 
-    for (const pair of pairs) {
-      // Get latest candle for this ISIN:Currency
-      const { data: latestCandle, error: candleError } = await supabase
-        .from("candles_1min")
-        .select("bucket, open, high, low, close, volume")
-        .eq("symbol", pair.isin)
-        .eq("currency", pair.currency)
-        .order("bucket", { ascending: false })
-        .limit(1)
-        .maybeSingle();
-
-      if (candleError) {
-        console.error(`Error fetching candle for ${pair.isin}:${pair.currency}:`, candleError);
-        continue;
-      }
-
+    for (const pair of pairsWithCurrency) {
+      const key = `${pair.isin}:${pair.currency}`;
+      const latestCandle = latestCandleMap.get(key);
+      
       if (!latestCandle) {
-        console.log(`No candle data for ${pair.isin}:${pair.currency}`);
+        console.log(`No candle data for ${key}`);
         continue;
       }
 
-      // Get the day's aggregated stats
-      const today = new Date();
-      const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0)).toISOString();
-
-      const { data: dayCandles } = await supabase
-        .from("candles_1min")
-        .select("open, high, low, volume, bucket")
-        .eq("symbol", pair.isin)
-        .eq("currency", pair.currency)
-        .gte("bucket", startOfDay)
-        .order("bucket", { ascending: true });
-
+      const dayCandles = dayCandlesMap.get(key) || [];
+      
       let dayOpen = Number(latestCandle.open);
       let dayHigh = Number(latestCandle.high);
       let dayLow = Number(latestCandle.low);
       let dayVolume = Number(latestCandle.volume || 0);
 
-      if (dayCandles && dayCandles.length > 0) {
+      if (dayCandles.length > 0) {
         dayOpen = Number(dayCandles[0].open);
         dayHigh = Math.max(...dayCandles.map(c => Number(c.high)));
         dayLow = Math.min(...dayCandles.map(c => Number(c.low)));
         dayVolume = dayCandles.reduce((sum, c) => sum + Number(c.volume || 0), 0);
       }
 
-      // Look up name from symbology
-      const { data: symData } = await supabase
-        .from("symbology")
-        .select("name")
-        .eq("isin", pair.isin)
-        .eq("currency", pair.currency)
-        .limit(1)
-        .maybeSingle();
-
       quotes.push({
         isin: pair.isin,
         currency: pair.currency,
-        name: symData?.name || null,
+        name: nameMap.get(key) || nameMap.get(pair.isin) || null,
         last: Number(latestCandle.close),
         high: dayHigh,
         low: dayLow,
@@ -291,15 +237,9 @@ serve(async (req) => {
     const responseData = { quotes, count: quotes.length };
     setCachedResponse(cacheKey, responseData);
 
-    return new Response(
-      JSON.stringify(responseData),
-      { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "MISS" } }
-    );
+    return jsonResponse(responseData, false);
   } catch (error) {
     console.error("Error in quotes function:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });

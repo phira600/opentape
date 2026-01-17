@@ -1,112 +1,15 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-
-declare const EdgeRuntime: { waitUntil: (promise: Promise<any>) => void };
-
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type, x-api-key",
-  "Cache-Control": "public, max-age=60",
-};
-
-// In-memory LRU cache for API key validation
-const API_KEY_CACHE = new Map<string, { valid: boolean; keyId: string | null; expires: number }>();
-const CACHE_TTL_MS = 5 * 60 * 1000;
-const MAX_CACHE_SIZE = 100;
-
-// In-memory response cache
-const RESPONSE_CACHE = new Map<string, { data: any; expires: number }>();
-const RESPONSE_CACHE_TTL_MS = 60 * 1000;
-
-function getCachedResponse(key: string): any | null {
-  const entry = RESPONSE_CACHE.get(key);
-  if (entry && entry.expires > Date.now()) return entry.data;
-  RESPONSE_CACHE.delete(key);
-  return null;
-}
-
-function setCachedResponse(key: string, data: any) {
-  if (RESPONSE_CACHE.size >= MAX_CACHE_SIZE) {
-    const oldestKey = RESPONSE_CACHE.keys().next().value;
-    if (oldestKey) RESPONSE_CACHE.delete(oldestKey);
-  }
-  RESPONSE_CACHE.set(key, { data, expires: Date.now() + RESPONSE_CACHE_TTL_MS });
-}
-
-async function validateApiKey(supabase: any, apiKey: string): Promise<{ valid: boolean; keyId: string | null }> {
-  if (!apiKey) return { valid: false, keyId: null };
-  
-  const cached = API_KEY_CACHE.get(apiKey);
-  if (cached && cached.expires > Date.now()) {
-    if (cached.valid && cached.keyId) {
-      EdgeRuntime.waitUntil(
-        supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", cached.keyId)
-      );
-    }
-    return { valid: cached.valid, keyId: cached.keyId };
-  }
-  
-  const encoder = new TextEncoder();
-  const data = encoder.encode(apiKey);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  const keyHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-  
-  const { data: keyData, error } = await supabase
-    .from("api_keys")
-    .select("id, is_active")
-    .eq("key_hash", keyHash)
-    .eq("is_active", true)
-    .maybeSingle();
-  
-  const isValid = !error && !!keyData;
-  
-  if (API_KEY_CACHE.size >= MAX_CACHE_SIZE) {
-    const oldestKey = API_KEY_CACHE.keys().next().value;
-    if (oldestKey) API_KEY_CACHE.delete(oldestKey);
-  }
-  
-  API_KEY_CACHE.set(apiKey, { 
-    valid: isValid, 
-    keyId: keyData?.id || null, 
-    expires: Date.now() + CACHE_TTL_MS 
-  });
-  
-  if (isValid && keyData?.id) {
-    EdgeRuntime.waitUntil(
-      supabase.from("api_keys").update({ last_used_at: new Date().toISOString() }).eq("id", keyData.id)
-    );
-  }
-  
-  return { valid: isValid, keyId: keyData?.id || null };
-}
-
-async function checkIpWhitelist(supabase: any, keyId: string, clientIp: string): Promise<boolean> {
-  const { data: whitelist, error } = await supabase
-    .from("api_key_ip_whitelist")
-    .select("ip_address")
-    .eq("api_key_id", keyId);
-  
-  if (error) {
-    console.error("IP whitelist check error:", error);
-    return true; // Allow if we can't check
-  }
-  
-  // If no whitelist entries, allow all IPs
-  if (!whitelist || whitelist.length === 0) {
-    return true;
-  }
-  
-  // Check if client IP is in whitelist
-  return whitelist.some((w: { ip_address: string }) => w.ip_address === clientIp);
-}
-
-function getClientIp(req: Request): string {
-  return req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() 
-    || req.headers.get("cf-connecting-ip") 
-    || req.headers.get("x-real-ip")
-    || "unknown";
-}
+import { 
+  corsHeaders, 
+  validateApiKey, 
+  checkIpWhitelist, 
+  getClientIp,
+  getCachedResponse,
+  setCachedResponse,
+  errorResponse,
+  jsonResponse
+} from "../_shared/api-utils.ts";
 
 // Re-aggregate 1-min candles into larger intervals
 function reaggregateCandlesToInterval(candles: any[], intervalMinutes: number): any[] {
@@ -184,22 +87,16 @@ serve(async (req) => {
     const { valid, keyId } = await validateApiKey(supabase, apiKey);
     
     if (!valid) {
-      return new Response(
-        JSON.stringify({ error: "Invalid or missing API key" }),
-        { status: 401, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Invalid or missing API key", 401);
     }
 
-    // Check IP whitelist
+    // Check IP whitelist (now cached)
     const clientIp = getClientIp(req);
     if (keyId) {
       const ipAllowed = await checkIpWhitelist(supabase, keyId, clientIp);
       if (!ipAllowed) {
         console.log(`IP ${clientIp} not allowed for API key ${keyId}`);
-        return new Response(
-          JSON.stringify({ error: "IP address not allowed" }),
-          { status: 403, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        return errorResponse("IP address not allowed", 403);
       }
     }
 
@@ -214,17 +111,11 @@ serve(async (req) => {
     const { isin, currency, interval, from, to } = params;
 
     if (!isin) {
-      return new Response(
-        JSON.stringify({ error: "Missing required parameter: isin" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Missing required parameter: isin", 400);
     }
 
     if (!currency) {
-      return new Response(
-        JSON.stringify({ error: "Missing required parameter: currency" }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+      return errorResponse("Missing required parameter: currency", 400);
     }
 
     const intervalMinutes = interval ? parseInt(interval) : 1;
@@ -236,17 +127,13 @@ serve(async (req) => {
     const cachedResponse = getCachedResponse(cacheKey);
     if (cachedResponse) {
       console.log(`Cache hit for ${cacheKey}`);
-      return new Response(
-        JSON.stringify(cachedResponse),
-        { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "HIT" } }
-      );
+      return jsonResponse(cachedResponse, true);
     }
 
     console.log(`Fetching intraday data for ISIN=${isin}, currency=${currency}`);
 
-    // Look up instrument name from symbology - try exact currency match first, then fall back to just ISIN
-    let symbolName: string | null = null;
-    const { data: symbologyData } = await supabase
+    // Look up instrument name from symbology - use Promise.all for parallel symbology lookup
+    const symbologyPromise = supabase
       .from("symbology")
       .select("name")
       .eq("isin", isin)
@@ -254,26 +141,43 @@ serve(async (req) => {
       .limit(1)
       .maybeSingle();
 
-    if (symbologyData?.name) {
-      symbolName = symbologyData.name;
-    } else {
-      // Fallback: query by ISIN only (handles GBP vs GBX mismatch)
-      const { data: fallbackData } = await supabase
-        .from("symbology")
-        .select("name")
-        .eq("isin", isin)
-        .limit(1)
-        .maybeSingle();
-      symbolName = fallbackData?.name || null;
-    }
+    const fallbackSymbologyPromise = supabase
+      .from("symbology")
+      .select("name")
+      .eq("isin", isin)
+      .limit(1)
+      .maybeSingle();
 
-    // Query candles directly by ISIN and currency
-    const pageSize = 1000;
+    // Increased page size from 1000 to 5000 for fewer round trips
+    const pageSize = 5000;
     let allCandles: any[] = [];
     let page = 0;
     let hasMore = true;
 
-    while (hasMore) {
+    // First page fetch
+    const { data: firstPage, error: firstError } = await supabase
+      .from("candles_1min")
+      .select("bucket, open, high, low, close, volume")
+      .eq("symbol", isin)
+      .eq("currency", currency)
+      .gte("bucket", startTime.toISOString())
+      .lte("bucket", endTime.toISOString())
+      .order("bucket", { ascending: true })
+      .range(0, pageSize - 1);
+
+    if (firstError) {
+      console.error("Candles query error:", firstError);
+      return errorResponse(`Failed to fetch candles: ${firstError.message}`, 500);
+    }
+
+    if (firstPage) {
+      allCandles = firstPage;
+      hasMore = firstPage.length === pageSize;
+      page = 1;
+    }
+
+    // Continue pagination if needed (with larger page size, this happens less often)
+    while (hasMore && page < 20) { // Reduced max pages from 100 to 20 with 5000 page size
       const { data: candlesPage, error: candlesError } = await supabase
         .from("candles_1min")
         .select("bucket, open, high, low, close, volume")
@@ -286,10 +190,7 @@ serve(async (req) => {
 
       if (candlesError) {
         console.error("Candles query error:", candlesError);
-        return new Response(
-          JSON.stringify({ error: "Failed to fetch candles", details: candlesError.message }),
-          { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-        );
+        break;
       }
 
       if (candlesPage && candlesPage.length > 0) {
@@ -299,9 +200,11 @@ serve(async (req) => {
       } else {
         hasMore = false;
       }
-
-      if (page >= 100) hasMore = false;
     }
+
+    // Resolve symbology lookup
+    const [symbologyData, fallbackData] = await Promise.all([symbologyPromise, fallbackSymbologyPromise]);
+    const symbolName = symbologyData.data?.name || fallbackData.data?.name || null;
 
     const aggregatedData = reaggregateCandlesToInterval(allCandles, intervalMinutes);
     
@@ -325,15 +228,9 @@ serve(async (req) => {
 
     setCachedResponse(cacheKey, responseData);
 
-    return new Response(
-      JSON.stringify(responseData),
-      { headers: { ...corsHeaders, "Content-Type": "application/json", "X-Cache": "MISS" } }
-    );
+    return jsonResponse(responseData, false);
   } catch (error) {
     console.error("Error in intraday function:", error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : "Unknown error" }),
-      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-    );
+    return errorResponse(error instanceof Error ? error.message : "Unknown error", 500);
   }
 });
