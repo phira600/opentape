@@ -585,6 +585,15 @@ function parseCboeDataWithStats(rawData: string, jobName: string): { trades: Tra
         continue
       }
 
+      // Get trading mode for non-price forming check
+      const tradingMode = indices.tradingMode >= 0 ? values[indices.tradingMode]?.trim() : ''
+      
+      // Skip non-price forming trades (CBOE uses explicit "Non-Price Forming" in trading_mode)
+      if (tradingMode?.toLowerCase().includes('non-price forming')) {
+        filteredCount++
+        continue
+      }
+
       trades.push({
         symbol,
         price,
@@ -593,7 +602,7 @@ function parseCboeDataWithStats(rawData: string, jobName: string): { trades: Tra
         venue: venue || 'CBOE',
         currency: indices.priceCurrency >= 0 ? values[indices.priceCurrency]?.trim() : undefined,
         market_mechanism: indices.marketMechanism >= 0 ? values[indices.marketMechanism]?.trim() : undefined,
-        trading_mode: indices.tradingMode >= 0 ? values[indices.tradingMode]?.trim() : undefined,
+        trading_mode: tradingMode || undefined,
         transaction_id: indices.tradeId >= 0 ? values[indices.tradeId]?.trim() : undefined,
       })
     }
@@ -804,6 +813,27 @@ function parseNasdaqDataWithStats(rawData: string, jobName: string): { trades: T
         continue
       }
 
+      // Get trade type and MMT flag for non-price forming check
+      const tradeType = indices.tradeType >= 0 ? values[indices.tradeType] : ''
+      const mmtFlag = indices.mmtFlag >= 0 ? values[indices.mmtFlag] : ''
+      
+      // Skip non-price forming trades
+      // Nasdaq MMT flags: 15-char string, positions 9-10 contain 'P' for price, positions 12-13 contain 'H' for price contributing
+      // Example: "45-3-----T----" = non-price forming (no P or H flags)
+      // Also check trade_type field for explicit "Non-Price Forming Trade"
+      const isPriceForming = (
+        // If no MMT flag, assume price-forming unless trade_type says otherwise
+        mmtFlag.length < 10 ||
+        // Check for 'P' in positions 9-10 (price indicator) - note: 0-indexed
+        (mmtFlag.length >= 10 && (mmtFlag.charAt(8) === 'P' || mmtFlag.charAt(9) === 'P'))
+      )
+      
+      if (tradeType?.toLowerCase().includes('non-price forming') || 
+          (mmtFlag.length >= 10 && !isPriceForming)) {
+        filteredCount++
+        continue
+      }
+
       trades.push({
         symbol,
         price,
@@ -811,8 +841,8 @@ function parseNasdaqDataWithStats(rawData: string, jobName: string): { trades: T
         trade_time: tradeTime,
         venue: venue || 'NASDAQ',
         currency: indices.currency >= 0 ? values[indices.currency] : undefined,
-        market_mechanism: indices.mmtFlag >= 0 ? values[indices.mmtFlag] : undefined,
-        trading_mode: indices.tradeType >= 0 ? values[indices.tradeType] : undefined,
+        market_mechanism: mmtFlag || undefined,
+        trading_mode: tradeType || undefined,
         transaction_id: indices.transactionId >= 0 ? values[indices.transactionId] : undefined,
       })
     }
@@ -1130,6 +1160,18 @@ function parseLsegPostTradeDataWithStats(rawData: string, jobName: string): { tr
         continue
       }
 
+      // Get flags for non-price forming check
+      const flags = indices.flags >= 0 ? values[indices.flags] : ''
+      
+      // Skip non-price forming trades
+      // LSEG uses MMT flags similar to Nasdaq - check for 'P' indicator
+      // Common non-price forming indicators: NPFT flag, or flags without price indicator
+      const flagsLower = flags.toLowerCase()
+      if (flagsLower.includes('npft') || flagsLower.includes('non-price')) {
+        filteredCount++
+        continue
+      }
+
       trades.push({
         symbol,
         price,
@@ -1137,7 +1179,7 @@ function parseLsegPostTradeDataWithStats(rawData: string, jobName: string): { tr
         trade_time: tradeTime,
         venue: venue || 'LSEG',
         currency: indices.currency >= 0 ? values[indices.currency] : undefined,
-        market_mechanism: indices.flags >= 0 ? values[indices.flags] : undefined,
+        market_mechanism: flags || undefined,
         transaction_id: indices.transactionId >= 0 ? values[indices.transactionId] : undefined,
       })
     }
