@@ -259,9 +259,11 @@ export type Database = {
           id: string
           is_enabled: boolean
           last_error: string | null
+          last_result_details: Json | null
           last_run_at: string | null
           last_status: string | null
           name: string
+          next_run_at: string | null
           run_days: string[] | null
           run_end_hour: number | null
           run_start_hour: number | null
@@ -275,9 +277,11 @@ export type Database = {
           id?: string
           is_enabled?: boolean
           last_error?: string | null
+          last_result_details?: Json | null
           last_run_at?: string | null
           last_status?: string | null
           name: string
+          next_run_at?: string | null
           run_days?: string[] | null
           run_end_hour?: number | null
           run_start_hour?: number | null
@@ -291,9 +295,11 @@ export type Database = {
           id?: string
           is_enabled?: boolean
           last_error?: string | null
+          last_result_details?: Json | null
           last_run_at?: string | null
           last_status?: string | null
           name?: string
+          next_run_at?: string | null
           run_days?: string[] | null
           run_end_hour?: number | null
           run_start_hour?: number | null
