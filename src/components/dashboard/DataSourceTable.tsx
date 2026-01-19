@@ -31,7 +31,7 @@ import {
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResizablePanelGroup, ResizablePanel } from "@/components/ui/resizable";
-import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon, Info, FileText, Copy, ExternalLink, AlertTriangle, ChevronRight, FileX, FileWarning, BarChart3 } from "lucide-react";
+import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon, Info, FileText, Copy, ExternalLink, AlertTriangle, ChevronRight, FileX, FileWarning, BarChart3, MinusCircle } from "lucide-react";
 import { formatDistanceToNow, addSeconds, format, subDays, startOfDay } from "date-fns";
 import {
   Tooltip,
@@ -620,6 +620,15 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
   };
 
   const getStatusBadge = (job: JobConfiguration) => {
+    if (!job.is_enabled) {
+      return (
+        <Badge variant="outline" className="text-muted-foreground">
+          <MinusCircle className="h-3 w-3 mr-1" />
+          Disabled
+        </Badge>
+      );
+    }
+    
     switch (job.last_status) {
       case "success":
         return (
