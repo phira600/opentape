@@ -24,6 +24,8 @@ interface JobConfiguration {
   run_days?: string[];
   run_start_hour?: number;
   run_end_hour?: number;
+  next_run_at?: string | null;
+  last_result_details?: Record<string, unknown> | null;
 }
 
 export default function Dashboard() {
@@ -37,7 +39,7 @@ export default function Dashboard() {
       .order("name", { ascending: true });
 
     if (!error && data) {
-      setJobs(data);
+      setJobs(data as unknown as JobConfiguration[]);
     }
     setIsLoading(false);
   };

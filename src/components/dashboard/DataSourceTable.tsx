@@ -31,8 +31,14 @@ import {
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResizablePanelGroup, ResizablePanel } from "@/components/ui/resizable";
-import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon, Info, FileText, Copy, ExternalLink, AlertTriangle, ChevronRight } from "lucide-react";
+import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon, Info, FileText, Copy, ExternalLink, AlertTriangle, ChevronRight, FileX, FileWarning, BarChart3 } from "lucide-react";
 import { formatDistanceToNow, addSeconds, format, subDays, startOfDay } from "date-fns";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 
 interface ActivityLogEntry {
   id: string;
@@ -53,6 +59,15 @@ const DAYS_OF_WEEK = [
   { value: "sun", label: "Sun" },
 ];
 
+interface JobResultDetails {
+  files_found?: number;
+  files_processed?: number;
+  files_empty?: number;
+  trades_parsed?: number;
+  trades_filtered?: number;
+  trades_saved?: number;
+}
+
 interface JobConfiguration {
   id: string;
   name: string;
@@ -66,6 +81,8 @@ interface JobConfiguration {
   run_days?: string[];
   run_start_hour?: number;
   run_end_hour?: number;
+  next_run_at?: string | null;
+  last_result_details?: JobResultDetails | Record<string, unknown> | null;
 }
 
 interface DataSourceTableProps {
@@ -611,6 +628,27 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
             Success
           </Badge>
         );
+      case "no_files":
+        return (
+          <Badge variant="outline" className="border-muted-foreground/50">
+            <FileX className="h-3 w-3 mr-1" />
+            No Files
+          </Badge>
+        );
+      case "no_data":
+        return (
+          <Badge variant="secondary" className="bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400">
+            <FileWarning className="h-3 w-3 mr-1" />
+            No Data
+          </Badge>
+        );
+      case "partial":
+        return (
+          <Badge variant="secondary" className="bg-yellow-100 text-yellow-700 dark:bg-yellow-900/30 dark:text-yellow-400">
+            <AlertTriangle className="h-3 w-3 mr-1" />
+            Partial
+          </Badge>
+        );
       case "timeout":
         return (
           <Badge variant="secondary">
@@ -639,19 +677,65 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     }
   };
 
+  const formatResultDetails = (details: JobResultDetails | null | undefined): string[] => {
+    if (!details) return [];
+    const lines: string[] = [];
+    
+    if (details.files_found !== undefined || details.files_processed !== undefined) {
+      const found = details.files_found ?? 0;
+      const processed = details.files_processed ?? 0;
+      const empty = details.files_empty ?? 0;
+      lines.push(`Files: ${found} found, ${processed} processed${empty > 0 ? `, ${empty} empty` : ''}`);
+    }
+    
+    if (details.trades_parsed !== undefined || details.trades_saved !== undefined) {
+      const parsed = details.trades_parsed ?? 0;
+      const filtered = details.trades_filtered ?? 0;
+      const saved = details.trades_saved ?? 0;
+      lines.push(`Trades: ${parsed.toLocaleString()} parsed${filtered > 0 ? `, ${filtered.toLocaleString()} filtered` : ''}, ${saved.toLocaleString()} saved`);
+    }
+    
+    return lines;
+  };
+
   const getNextRunTime = (job: JobConfiguration) => {
-    if (!job.is_enabled) return "Disabled";
-    if (!job.last_run_at) return "Pending";
+    if (!job.is_enabled) return { text: "Disabled", relative: false };
+    if (job.last_status === "running") return { text: "Running", relative: false };
+    
+    // Use next_run_at from database if available
+    if (job.next_run_at) {
+      const nextRun = new Date(job.next_run_at);
+      const now = new Date();
+      
+      if (nextRun <= now) {
+        return { text: "Soon", relative: false };
+      }
+      
+      const diffMs = nextRun.getTime() - now.getTime();
+      const diffSecs = Math.floor(diffMs / 1000);
+      
+      if (diffSecs < 60) {
+        return { text: `${diffSecs}s`, relative: true };
+      } else if (diffSecs < 3600) {
+        const mins = Math.floor(diffSecs / 60);
+        return { text: `${mins}m`, relative: true };
+      } else {
+        return { text: format(nextRun, "HH:mm"), relative: false };
+      }
+    }
+    
+    // Fallback to calculated time
+    if (!job.last_run_at) return { text: "Pending", relative: false };
     
     const lastRun = new Date(job.last_run_at);
     const interval = job.fetch_interval_seconds || 60;
     const nextRun = addSeconds(lastRun, interval);
     
     if (nextRun < new Date()) {
-      return "Soon";
+      return { text: "Soon", relative: false };
     }
     
-    return format(nextRun, "HH:mm:ss");
+    return { text: format(nextRun, "HH:mm:ss"), relative: false };
   };
 
   const toggleDay = (day: string) => {
@@ -674,6 +758,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
               <TableHead>Description</TableHead>
               <TableHead>Status</TableHead>
               <TableHead>Last Run</TableHead>
+              <TableHead>Next Run</TableHead>
               <TableHead>Schedule</TableHead>
               <TableHead>Enabled</TableHead>
               <TableHead className="text-right">Actions</TableHead>
@@ -758,7 +843,29 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                 <TableCell>
                   <span className="text-sm text-muted-foreground">{getSourceDescription(job.source_type)}</span>
                 </TableCell>
-                <TableCell>{getStatusBadge(job)}</TableCell>
+                <TableCell>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-1 cursor-default">
+                          {getStatusBadge(job)}
+                          {job.last_result_details && (
+                            <BarChart3 className="h-3 w-3 text-muted-foreground" />
+                          )}
+                        </div>
+                      </TooltipTrigger>
+                      {job.last_result_details && (
+                        <TooltipContent side="right" className="max-w-xs">
+                          <div className="space-y-1 text-xs">
+                            {formatResultDetails(job.last_result_details).map((line, idx) => (
+                              <p key={idx}>{line}</p>
+                            ))}
+                          </div>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
+                </TableCell>
                 <TableCell>
                   {job.last_run_at ? (
                     <span className="text-sm text-muted-foreground flex items-center gap-1">
@@ -768,6 +875,20 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                   ) : (
                     <span className="text-sm text-muted-foreground">Never</span>
                   )}
+                </TableCell>
+                <TableCell>
+                  {(() => {
+                    const nextRun = getNextRunTime(job);
+                    return (
+                      <span className={cn(
+                        "text-sm flex items-center gap-1",
+                        nextRun.relative ? "text-green-600 dark:text-green-400 font-medium" : "text-muted-foreground"
+                      )}>
+                        {nextRun.relative && <RefreshCw className="h-3 w-3" />}
+                        {nextRun.text}
+                      </span>
+                    );
+                  })()}
                 </TableCell>
                 <TableCell>
                   <Popover open={editingJobSchedule === job.id} onOpenChange={(open) => {

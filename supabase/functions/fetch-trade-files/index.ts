@@ -12,6 +12,54 @@ interface JobConfiguration {
   source_type: 'cboe' | 'cboe_bxe' | 'cboe_cxe' | 'cboe_dxe' | 'cboe_sis' | 'nasdaq' | 'lseg' | 'lseg_trqx' | 'lseg_tqex' | 'lseg_xlon' | 'custom'
   is_enabled: boolean
   last_run_at: string | null
+  fetch_interval_seconds?: number
+  run_days?: string[]
+  run_start_hour?: number
+  run_end_hour?: number
+}
+
+// Calculate next run time based on job schedule
+function calculateNextRunTime(job: JobConfiguration): string {
+  const now = new Date()
+  const intervalSeconds = job.fetch_interval_seconds || 60
+  const runDays = job.run_days || ['mon', 'tue', 'wed', 'thu', 'fri']
+  const runStartHour = job.run_start_hour ?? 6
+  const runEndHour = job.run_end_hour ?? 21
+  
+  // Day mapping
+  const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
+  
+  // Start with next run based on interval
+  let nextRun = new Date(now.getTime() + intervalSeconds * 1000)
+  
+  // Check if next run is within schedule window
+  const checkScheduleWindow = (date: Date): boolean => {
+    const dayName = dayNames[date.getUTCDay()]
+    const hour = date.getUTCHours()
+    return runDays.includes(dayName) && hour >= runStartHour && hour < runEndHour
+  }
+  
+  // If within window, return the interval-based time
+  if (checkScheduleWindow(nextRun)) {
+    return nextRun.toISOString()
+  }
+  
+  // Otherwise, find next valid window
+  // Start from beginning of next hour
+  nextRun = new Date(now)
+  nextRun.setUTCMinutes(0, 0, 0)
+  nextRun.setUTCHours(nextRun.getUTCHours() + 1)
+  
+  // Search up to 7 days ahead
+  for (let i = 0; i < 7 * 24; i++) {
+    if (checkScheduleWindow(nextRun)) {
+      return nextRun.toISOString()
+    }
+    nextRun.setUTCHours(nextRun.getUTCHours() + 1)
+  }
+  
+  // Fallback: return interval-based time
+  return new Date(now.getTime() + intervalSeconds * 1000).toISOString()
 }
 
 interface FetchedFile {
@@ -136,7 +184,7 @@ Deno.serve(async (req) => {
           })
         }
 
-        if (files.length === 0) {
+      if (files.length === 0) {
           console.log(`No files found for job ${job.name}`)
           await supabase.from('activity_logs').insert({
             job_id: job.id,
@@ -145,12 +193,27 @@ Deno.serve(async (req) => {
             details: { reason: 'No matching files found or all files already processed' }
           })
           
+          // Calculate next run time
+          const nextRunAt = calculateNextRunTime(job)
+          
           await supabase
             .from('job_configurations')
-            .update({ last_status: 'success' })
+            .update({ 
+              last_status: 'no_files', 
+              last_error: null,
+              next_run_at: nextRunAt,
+              last_result_details: {
+                files_found: 0,
+                files_processed: 0,
+                files_empty: 0,
+                trades_parsed: 0,
+                trades_filtered: 0,
+                trades_saved: 0
+              }
+            })
             .eq('id', job.id)
 
-          results.push({ job_id: job.id, status: 'success', files_count: 0 })
+          results.push({ job_id: job.id, status: 'no_files', files_count: 0 })
           continue
         }
 
@@ -254,6 +317,21 @@ Deno.serve(async (req) => {
         // Collect processed filenames for logging
         const processedFileNames = processedFileDetails.filter(f => f.trades > 0).map(f => f.name).slice(0, 10)
 
+        // Determine granular status based on results
+        let finalStatus = 'success'
+        if (totalInserted === 0) {
+          if (filesProcessed === 0 && emptyFilesCount > 0) {
+            // All files were empty or filtered out
+            finalStatus = 'no_data'
+          } else if (filesProcessed === 0) {
+            // No files were actually processed (all duplicates?)
+            finalStatus = 'no_data'
+          }
+        } else if (emptyFilesCount > 0 && filesProcessed > 0) {
+          // Some files had data, some were empty
+          finalStatus = 'partial'
+        }
+
         // Log success with detailed breakdown
         const logMessage = emptyFilesCount > 0
           ? `Processed ${filesProcessed} files with ${totalInserted} trades (${emptyFilesCount} files had no valid trades)`
@@ -261,7 +339,7 @@ Deno.serve(async (req) => {
         
         await supabase.from('activity_logs').insert({
           job_id: job.id,
-          log_type: 'success',
+          log_type: finalStatus === 'success' ? 'success' : 'info',
           message: logMessage,
           details: { 
             files_count: filesProcessed, 
@@ -273,13 +351,37 @@ Deno.serve(async (req) => {
           }
         })
 
-        // Update job status
+        // Calculate next run time
+        const nextRunAt = calculateNextRunTime(job)
+        
+        // Build result details
+        const resultDetails = {
+          files_found: files.length,
+          files_processed: filesProcessed,
+          files_empty: emptyFilesCount,
+          trades_parsed: totalInserted + filteredTradesCount,
+          trades_filtered: filteredTradesCount,
+          trades_saved: totalInserted
+        }
+
+        // Update job status with granular status and result details
         await supabase
           .from('job_configurations')
-          .update({ last_status: 'success', last_error: null })
+          .update({ 
+            last_status: finalStatus, 
+            last_error: null,
+            next_run_at: nextRunAt,
+            last_result_details: resultDetails
+          })
           .eq('id', job.id)
 
-        results.push({ job_id: job.id, status: 'success', files_count: filesProcessed, trades_count: totalInserted })
+        results.push({ 
+          job_id: job.id, 
+          status: finalStatus, 
+          files_count: filesProcessed, 
+          trades_count: totalInserted,
+          result_details: resultDetails
+        })
 
       } catch (jobError) {
         const errorMessage = jobError instanceof Error ? jobError.message : 'Unknown error'
