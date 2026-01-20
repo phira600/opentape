@@ -116,7 +116,7 @@ export default function FAQ() {
                 right to protect its servers. If you request data 100 times a second, they will block you for a 
                 <strong> Denial of Service (DoS)</strong> or "Abusive Scraping."
               </p>
-              <p className="text-muted-foreground">The Fix: Use the built-in rate limits in opentape which scrapes about once every 1 minute per exchange and filetype.<strong>The Fix:</strong> Use the built-in rate limits in opentape. Do not poll faster than once every 15-20 minutes per instrument.
+              <p className="text-muted-foreground">The Fix: Use the built-in rate limits in opentape which scrapes about once every 1 minute per exchange and filetype<strong>The Fix:</strong> Use the built-in rate limits in opentape. Do not poll faster than once every 15-20 minutes per instrument.
               </p>
             </div>
 
