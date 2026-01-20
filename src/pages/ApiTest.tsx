@@ -41,7 +41,6 @@ export default function ApiTest() {
 
   // Quotes state
   const [quotesIsins, setQuotesIsins] = useState("");
-  const [quotesMic, setQuotesMic] = useState("");
   const [quotesLoading, setQuotesLoading] = useState(false);
   const [quotesResult, setQuotesResult] = useState<string>("");
 
@@ -123,7 +122,6 @@ export default function ApiTest() {
     try {
       const params = new URLSearchParams();
       if (quotesIsins) params.append("isins", quotesIsins);
-      if (quotesMic) params.append("mic", quotesMic);
 
       const response = await fetch(
         `https://${import.meta.env.VITE_SUPABASE_PROJECT_ID}.supabase.co/functions/v1/quotes?${params}`,
@@ -366,31 +364,17 @@ export default function ApiTest() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label htmlFor="quotes-isins">ISINs (with optional :currency)</Label>
-                    <Input
-                      id="quotes-isins"
-                      placeholder="e.g., GB00BH4HKS39:GBP,SE0022419784:SEK"
-                      value={quotesIsins}
-                      onChange={(e) => setQuotesIsins(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Format: ISIN:CURRENCY for mixed queries
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="quotes-mic">MIC (query by market)</Label>
-                    <Input
-                      id="quotes-mic"
-                      placeholder="e.g., XLON, XSTO"
-                      value={quotesMic}
-                      onChange={(e) => setQuotesMic(e.target.value)}
-                    />
-                    <p className="text-xs text-muted-foreground">
-                      Returns all ISINs for the given MIC
-                    </p>
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="quotes-isins">ISINs (with optional :currency) *</Label>
+                  <Input
+                    id="quotes-isins"
+                    placeholder="e.g., GB00BH4HKS39:GBP,SE0022419784:SEK"
+                    value={quotesIsins}
+                    onChange={(e) => setQuotesIsins(e.target.value)}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Format: ISIN or ISIN:CURRENCY. Comma-separated for multiple quotes.
+                  </p>
                 </div>
 
                 <Button onClick={handleQuotes} disabled={quotesLoading || !getActiveApiKey()}>
