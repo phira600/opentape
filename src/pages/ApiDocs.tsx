@@ -102,6 +102,7 @@ Headers: x-api-key: your_api_key`,
       { name: "quotes[].open", type: "number", description: "Opening price" },
       { name: "quotes[].volume", type: "number", description: "Daily volume" },
       { name: "quotes[].timestamp", type: "string", description: "Last trade time" },
+      { name: "quotes[].previousClose", type: "number | null", description: "Previous trading day's closing price" },
       { name: "count", type: "number", description: "Number of quotes returned" },
     ],
     exampleRequest: `GET ${API_BASE_URL}/quotes?isins=GB00BH4HKS39:GBP,SE0022419784:SEK
@@ -117,7 +118,8 @@ Headers: x-api-key: your_api_key`,
       "low": 72.30,
       "open": 72.40,
       "volume": 125000,
-      "timestamp": "2025-12-16T08:45:00.000Z"
+      "timestamp": "2025-12-16T08:45:00.000Z",
+      "previousClose": 72.10
     }
   ],
   "count": 1

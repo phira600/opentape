@@ -21,6 +21,7 @@ interface QuoteResult {
   open: number;
   volume: number;
   timestamp: string;
+  previousClose: number | null;
 }
 
 serve(async (req) => {
@@ -130,8 +131,8 @@ serve(async (req) => {
     const today = new Date();
     const startOfDay = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 0, 0, 0, 0)).toISOString();
 
-    // Execute all queries in parallel (3 queries instead of 40+)
-    const [latestCandlesResult, dayCandlesResult, symbologyResult] = await Promise.all([
+    // Execute all queries in parallel (4 queries instead of 40+)
+    const [latestCandlesResult, dayCandlesResult, symbologyResult, previousCloseResult] = await Promise.all([
       // Get latest candle for each ISIN:Currency pair
       supabase
         .from("candles_1min")
@@ -154,7 +155,17 @@ serve(async (req) => {
       supabase
         .from("symbology")
         .select("isin, currency, name")
-        .in("isin", allIsins)
+        .in("isin", allIsins),
+      
+      // Get previous day's last candle (before today's start)
+      supabase
+        .from("candles_1min")
+        .select("symbol, currency, close, bucket")
+        .in("symbol", allIsins)
+        .in("currency", allCurrencies)
+        .lt("bucket", startOfDay)
+        .order("bucket", { ascending: false })
+        .limit(pairsWithCurrency.length * 2)
     ]);
 
     // Build lookup maps for efficient access
@@ -189,6 +200,17 @@ serve(async (req) => {
         // Also set by ISIN only as fallback
         if (!nameMap.has(row.isin) && row.name) {
           nameMap.set(row.isin, row.name);
+        }
+      }
+    }
+
+    // Build previous close map (first occurrence per pair is the most recent before today)
+    const previousCloseMap = new Map<string, number>();
+    if (previousCloseResult.data) {
+      for (const candle of previousCloseResult.data) {
+        const key = `${candle.symbol}:${candle.currency}`;
+        if (!previousCloseMap.has(key)) {
+          previousCloseMap.set(key, Number(candle.close));
         }
       }
     }
@@ -229,6 +251,7 @@ serve(async (req) => {
         open: dayOpen,
         volume: dayVolume,
         timestamp: latestCandle.bucket,
+        previousClose: previousCloseMap.get(key) ?? null,
       });
     }
 
