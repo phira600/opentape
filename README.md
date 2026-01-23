@@ -2,146 +2,269 @@
 
 Real-time trade data aggregation and API platform.
 
-## Self-Hosting
+## Complete Setup Guide
 
-This application can be deployed to any static hosting service. The backend (database, edge functions, authentication) runs on Supabase.
+This guide walks you through deploying opentape from scratch using **GitHub**, **GitHub Codespaces**, **Supabase**, and **Vercel**. No local development environment required.
 
 ### Prerequisites
 
-- Node.js 18+ installed
-- A Supabase project with the database schema deployed
+You'll need accounts on these free services:
+- [GitHub](https://github.com) - Code hosting
+- [Supabase](https://supabase.com) - Backend (database, authentication, edge functions)
+- [Vercel](https://vercel.com) - Frontend hosting
 
-### Environment Variables
+---
 
-Copy `.env.example` to `.env` and configure:
+## Step 1: Fork the Repository
 
-| Variable | Description |
-|----------|-------------|
-| `VITE_SUPABASE_URL` | Your Supabase project URL (e.g., `https://xxxxx.supabase.co`) |
-| `VITE_SUPABASE_PUBLISHABLE_KEY` | Your Supabase anon/public key |
-| `VITE_SUPABASE_PROJECT_ID` | Your Supabase project ID |
+1. Go to the opentape repository on GitHub
+2. Click the **Fork** button in the top-right corner
+3. Select your GitHub account as the destination
+4. Wait for the fork to complete - you now have your own copy of opentape
 
-### Deploy to Vercel
+---
 
-1. Fork/clone this repository to your GitHub account
-2. Import the repository to [Vercel](https://vercel.com)
-3. Add environment variables in Vercel dashboard (Settings > Environment Variables)
-4. Deploy
+## Step 2: Create a Supabase Project
 
-### Deploy to Netlify
+1. Go to [supabase.com](https://supabase.com) and sign up (you can use your GitHub account)
+2. Click **New Project**
+3. Fill in:
+   - **Name:** `opentape` (or any name you prefer)
+   - **Database Password:** Create a strong password and **save it somewhere safe**
+   - **Region:** Choose the closest to your users
+4. Click **Create new project** and wait 2-3 minutes for setup
 
-1. Fork/clone this repository to your GitHub account
-2. Connect to [Netlify](https://netlify.com)
-3. Build command: `npm run build`
-4. Publish directory: `dist`
-5. Add environment variables in Netlify dashboard
-6. Deploy
+### Get Your Supabase Credentials
 
-### Deploy to Cloudflare Pages
+1. In your Supabase project, go to **Settings** → **API** (in the left sidebar)
+2. Copy these values and save them somewhere (you'll need them later):
 
-1. Fork/clone this repository
-2. Connect to [Cloudflare Pages](https://pages.cloudflare.com)
-3. Build command: `npm run build`
-4. Build output directory: `dist`
-5. Add environment variables
-6. Deploy
+| Value | Where to Find It |
+|-------|------------------|
+| Project URL | Under "Project URL" (looks like `https://xxxxx.supabase.co`) |
+| Anon Key | Under "Project API keys" → `anon` `public` |
+| Service Role Key | Under "Project API keys" → `service_role` (click "Reveal") |
+| Project ID | The `xxxxx` part from your Project URL |
 
-### Manual Build
+---
+
+## Step 3: Open GitHub Codespaces
+
+GitHub Codespaces gives you a cloud development environment - no need to install anything locally.
+
+1. Go to your forked opentape repository on GitHub
+2. Click the green **Code** button
+3. Select the **Codespaces** tab
+4. Click **Create codespace on main**
+5. Wait 2-3 minutes for the environment to load
+
+You now have a VS Code editor in your browser with all tools pre-installed.
+
+---
+
+## Step 4: Install Supabase CLI and Login
+
+In the Codespaces terminal (bottom of the screen), run these commands:
 
 ```bash
-# Install dependencies
-npm install
+# Install Supabase CLI
+npm install -g supabase
 
-# Build for production
-npm run build
-
-# The dist/ folder contains the static files to deploy
+# Login to Supabase (this opens a browser window)
+supabase login
 ```
 
-## Backend Setup (Supabase)
+When prompted, authorize the CLI in the browser window that opens.
 
-The backend requires a Supabase project. After creating your project:
+---
 
-1. Run all migrations from `supabase/migrations/` folder using Supabase CLI
-2. Deploy edge functions from `supabase/functions/` folder
-3. Run the provisioning commands below
-
-### Quick Start (New Installation)
-
-After deploying to Supabase, run these commands to set up the system:
+## Step 5: Link to Your Supabase Project
 
 ```bash
-# Step 1: Bootstrap the first admin user (no authentication required on fresh install)
+# Link this codebase to your Supabase project
+supabase link --project-ref YOUR_PROJECT_ID
+```
+
+Replace `YOUR_PROJECT_ID` with the Project ID you saved earlier (the `xxxxx` part from your URL).
+
+When prompted for the database password, enter the password you created in Step 2.
+
+---
+
+## Step 6: Run Database Migrations
+
+This creates all the tables and configurations needed:
+
+```bash
+supabase db push
+```
+
+Type `y` when asked to confirm.
+
+---
+
+## Step 7: Deploy Edge Functions
+
+```bash
+supabase functions deploy
+```
+
+This deploys all the backend functions. Wait for each one to complete.
+
+---
+
+## Step 8: Enable Required Extensions
+
+In Supabase dashboard:
+
+1. Go to **Database** → **Extensions** (in the left sidebar)
+2. Search for and enable these extensions:
+   - `pg_cron` - For scheduled tasks
+   - `pg_net` - For HTTP requests from the database
+
+---
+
+## Step 9: Bootstrap the Admin User
+
+Run this command in Codespaces (replace YOUR_PROJECT_ID):
+
+```bash
 curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-admin
 ```
 
-This creates the default admin account. **Log in immediately and change the password!**
+You should see a response with:
+```json
+{
+  "success": true,
+  "credentials": {
+    "email": "admin@opentape.local",
+    "password": "admin123!"
+  }
+}
+```
+
+**Save these credentials** - you'll use them to log in.
+
+---
+
+## Step 10: Deploy to Vercel
+
+1. Go to [vercel.com](https://vercel.com) and sign up with your GitHub account
+2. Click **Add New...** → **Project**
+3. Find your forked `opentape` repository and click **Import**
+4. In the configuration screen:
+   - **Framework Preset:** Vite (should auto-detect)
+   - **Root Directory:** Leave as `.` (default)
+5. Expand **Environment Variables** and add:
+
+| Name | Value |
+|------|-------|
+| `VITE_SUPABASE_URL` | Your Project URL (e.g., `https://xxxxx.supabase.co`) |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | Your Anon Key |
+| `VITE_SUPABASE_PROJECT_ID` | Your Project ID |
+
+6. Click **Deploy**
+7. Wait 1-2 minutes for the build to complete
+
+Your app is now live! Click the URL Vercel gives you to open it.
+
+---
+
+## Step 11: Complete Initial Setup
+
+1. Open your deployed app URL
+2. Click **Login**
+3. Enter the default credentials:
+   - Email: `admin@opentape.local`
+   - Password: `admin123!`
+4. **Immediately change your password** in Settings
+
+### Initialize Data Sources and Cron Jobs
+
+After logging in, you need to initialize the system. You can do this via the Codespaces terminal:
+
+First, get your access token from the browser:
+1. Open browser Developer Tools (F12 or right-click → Inspect)
+2. Go to **Application** tab → **Local Storage** → your app URL
+3. Find the key that contains `access_token` and copy the token value
+
+Then run these commands in Codespaces:
 
 ```bash
-# Step 2: After logging in, get your JWT token and run these authenticated requests:
-
-# Set up default data sources (CBOE, Nasdaq Nordic)
+# Set up default data sources
 curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-jobs \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 
-# Set up cron jobs for scheduled tasks
+# Set up scheduled tasks
 curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-cron-jobs \
-  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
 ```
 
-Replace `YOUR_PROJECT_ID` with your Supabase project ID.
+Replace `YOUR_PROJECT_ID` and `YOUR_ACCESS_TOKEN` with your values.
 
-> **Note:** The `provision-default-admin` endpoint only works without authentication on a fresh install (when no admins exist). Once an admin is created, the endpoint becomes protected.
+---
 
-### Default Admin Credentials
+## You're Done! 🎉
 
-- **Email:** `admin@opentape.local`
-- **Password:** `admin123!`
+Your opentape instance is now fully configured with:
+- ✅ Database with all tables
+- ✅ Authentication system
+- ✅ Edge functions deployed
+- ✅ Admin user created
+- ✅ Data sources configured
+- ✅ Scheduled tasks running
 
-⚠️ **Change the password immediately after first login!**
+---
 
-### What Gets Set Up
+## Troubleshooting
 
-**Data Sources** (via `provision-default-jobs`):
-- CBOE BXE, CXE, DXE trade feeds
-- Nasdaq Nordic trade feed
+### "Invalid login credentials"
+- Make sure you're using `admin@opentape.local` (not your email)
+- Password is `admin123!` (with the exclamation mark)
 
-**Cron Jobs** (via `provision-cron-jobs`):
-- `fetch-trade-files-weekdays`: Fetches trades every minute on weekdays
-- `cleanup-old-trades-daily`: Trades cleanup daily
-- `refresh-candles-5min`: Refreshes price candles every 5 minutes
-- `cboe-sis-symbology-daily`: Updates symbol data at 8 AM UTC on weekdays
+### Edge functions not working
+- Check Supabase Dashboard → Edge Functions → Logs for errors
+- Make sure all environment variables are set correctly in Vercel
 
-### Manual Admin Setup (Alternative)
+### Data not appearing
+- Check that cron jobs are enabled in Supabase Dashboard → Database → Extensions → pg_cron
+- View logs in Supabase Dashboard → Edge Functions
 
-1. Create a user account in the backend authentication system
-2. Assign admin role by running this SQL:
+### Need to redeploy after changes
+- Push changes to GitHub - Vercel auto-deploys
+- For edge functions: run `supabase functions deploy` again in Codespaces
 
-```sql
-INSERT INTO public.user_roles (user_id, role)
-VALUES ('USER_UUID_HERE', 'admin');
-```
+---
 
-Once the admin user is set up, they can invite other users from the Settings page.
+## Updating Your Installation
+
+When new versions are released:
+
+1. Sync your fork with the original repository (GitHub has a "Sync fork" button)
+2. Open Codespaces on your updated fork
+3. Run `supabase db push` if there are new migrations
+4. Run `supabase functions deploy` if there are function changes
+5. Vercel auto-deploys frontend changes
+
+---
 
 ## Technology Stack
 
-- Vite
-- TypeScript
-- React
-- shadcn-ui
-- Tailwind CSS
-- Supabase (Backend)
+- **Frontend:** Vite, TypeScript, React, shadcn-ui, Tailwind CSS
+- **Backend:** Supabase (PostgreSQL, Auth, Edge Functions)
+- **Hosting:** Any static host (Vercel, Netlify, Cloudflare Pages)
 
-## Development
+---
 
-```bash
-# Install dependencies
-npm install
+## Alternative: Manual Database Setup
 
-# Start development server
-npm run dev
-```
+If you prefer to run migrations manually instead of using `supabase db push`:
+
+1. Go to Supabase Dashboard → SQL Editor
+2. Open each file in the `supabase/migrations/` folder (in order by date)
+3. Copy and run each migration
+
+---
 
 ## License
 
