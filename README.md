@@ -71,17 +71,27 @@ The backend requires a Supabase project. After creating your project:
 After deploying to Supabase, run these commands to set up the system:
 
 ```bash
-# 1. Create the first admin user
+# Step 1: Bootstrap the first admin user (no authentication required on fresh install)
 curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-admin
+```
 
-# 2. Set up default data sources (CBOE, Nasdaq Nordic)
-curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-jobs
+This creates the default admin account. **Log in immediately and change the password!**
 
-# 3. Set up cron jobs for scheduled tasks
-curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-cron-jobs
+```bash
+# Step 2: After logging in, get your JWT token and run these authenticated requests:
+
+# Set up default data sources (CBOE, Nasdaq Nordic)
+curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-jobs \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
+
+# Set up cron jobs for scheduled tasks
+curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-cron-jobs \
+  -H "Authorization: Bearer YOUR_JWT_TOKEN"
 ```
 
 Replace `YOUR_PROJECT_ID` with your Supabase project ID.
+
+> **Note:** The `provision-default-admin` endpoint only works without authentication on a fresh install (when no admins exist). Once an admin is created, the endpoint becomes protected.
 
 ### Default Admin Credentials
 
