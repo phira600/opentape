@@ -1,4 +1,6 @@
 -- Drop the existing candles_1min table and recreate with new structure
+DROP MATERIALIZED VIEW IF EXISTS public.candles_1min CASCADE;
+DROP VIEW IF EXISTS public.candles_1min CASCADE;
 DROP TABLE IF EXISTS public.candles_1min;
 
 CREATE TABLE public.candles_1min (
