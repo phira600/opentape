@@ -2,9 +2,9 @@
 
 Real-time trade data aggregation and API platform.
 
-## Complete Setup Guide
+## Deployment Guide
 
-This guide walks you through deploying opentape from scratch using **GitHub**, **GitHub Codespaces**, **Supabase**, and **Vercel**. No local development environment required.
+Deploy opentape in under 30 minutes using **GitHub Codespaces** (for backend setup) and **Vercel** (for hosting). No local development environment required.
 
 ### Prerequisites
 
@@ -67,8 +67,8 @@ You now have a VS Code editor in your browser with all tools pre-installed.
 In the Codespaces terminal (bottom of the screen), run these commands:
 
 ```bash
-# Install Supabase CLI
-npm install -g supabase
+# Install Supabase CLI via Homebrew (pre-installed in Codespaces)
+brew install supabase/tap/supabase
 
 # Login to Supabase (this opens a browser window)
 supabase login
@@ -163,7 +163,7 @@ You should see a response with:
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Your Anon Key |
 | `VITE_SUPABASE_PROJECT_ID` | Your Project ID |
 
-> **Note:** You do NOT need to create or edit a `.env` file in your repository. Vercel injects these environment variables during the build process. The `.env` file is only needed for local development.
+> **Note:** You do NOT need to create or edit a `.env` file in your repository. Vercel injects these environment variables during the build process.
 
 6. Click **Deploy**
 7. Wait 1-2 minutes for the build to complete
@@ -183,7 +183,7 @@ Your app is now live! Click the URL Vercel gives you to open it.
 
 ### Initialize Data Sources and Cron Jobs
 
-After logging in, you need to initialize the system. You can do this via the Codespaces terminal:
+After logging in, initialize the system via the Codespaces terminal:
 
 First, get your access token from the browser:
 1. Open browser Developer Tools (F12 or right-click → Inspect)
@@ -250,66 +250,17 @@ When new versions are released:
 
 ---
 
-## Local Development
-
-If you want to run opentape on your local machine (for development or testing), you'll need to set up environment variables locally.
-
-### Prerequisites
-
-- Node.js 18+ installed
-- npm or bun package manager
-
-### Setup
-
-1. Clone your forked repository:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/opentape.git
-   cd opentape
-   ```
-
-2. Copy the example environment file:
-   ```bash
-   cp .env.example .env
-   ```
-
-3. Edit `.env` and fill in your Supabase credentials:
-   ```env
-   VITE_SUPABASE_URL=https://your-project-id.supabase.co
-   VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key
-   VITE_SUPABASE_PROJECT_ID=your-project-id
-   ```
-
-4. Install dependencies:
-   ```bash
-   npm install
-   ```
-
-5. Start the development server:
-   ```bash
-   npm run dev
-   ```
-
-6. Open http://localhost:8080 in your browser
-
-> **Note:** The `.env` file is gitignored and should never be committed to the repository. Each developer needs their own `.env` file with their Supabase credentials.
-
----
-
 ## Technology Stack
 
 - **Frontend:** Vite, TypeScript, React, shadcn-ui, Tailwind CSS
 - **Backend:** Supabase (PostgreSQL, Auth, Edge Functions)
-- **Hosting:** Any static host (Vercel, Netlify, Cloudflare Pages)
+- **Hosting:** Vercel (or any static host)
 
 ---
 
-## Alternative: Manual Database Setup
+## Local Development
 
-If you prefer to run migrations manually instead of using `supabase db push`:
-
-1. Go to Supabase Dashboard → SQL Editor
-2. Open each file in the `supabase/migrations/` folder (in order by date)
-3. Copy and run each migration
+For contributors who want to run opentape locally, see [DEVELOPMENT.md](DEVELOPMENT.md).
 
 ---
 
