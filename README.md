@@ -163,6 +163,8 @@ You should see a response with:
 | `VITE_SUPABASE_PUBLISHABLE_KEY` | Your Anon Key |
 | `VITE_SUPABASE_PROJECT_ID` | Your Project ID |
 
+> **Note:** You do NOT need to create or edit a `.env` file in your repository. Vercel injects these environment variables during the build process. The `.env` file is only needed for local development.
+
 6. Click **Deploy**
 7. Wait 1-2 minutes for the build to complete
 
@@ -245,6 +247,51 @@ When new versions are released:
 3. Run `supabase db push` if there are new migrations
 4. Run `supabase functions deploy` if there are function changes
 5. Vercel auto-deploys frontend changes
+
+---
+
+## Local Development
+
+If you want to run opentape on your local machine (for development or testing), you'll need to set up environment variables locally.
+
+### Prerequisites
+
+- Node.js 18+ installed
+- npm or bun package manager
+
+### Setup
+
+1. Clone your forked repository:
+   ```bash
+   git clone https://github.com/YOUR_USERNAME/opentape.git
+   cd opentape
+   ```
+
+2. Copy the example environment file:
+   ```bash
+   cp .env.example .env
+   ```
+
+3. Edit `.env` and fill in your Supabase credentials:
+   ```env
+   VITE_SUPABASE_URL=https://your-project-id.supabase.co
+   VITE_SUPABASE_PUBLISHABLE_KEY=your-anon-key
+   VITE_SUPABASE_PROJECT_ID=your-project-id
+   ```
+
+4. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+5. Start the development server:
+   ```bash
+   npm run dev
+   ```
+
+6. Open http://localhost:8080 in your browser
+
+> **Note:** The `.env` file is gitignored and should never be committed to the repository. Each developer needs their own `.env` file with their Supabase credentials.
 
 ---
 
