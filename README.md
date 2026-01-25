@@ -62,19 +62,18 @@ You now have a VS Code editor in your browser with all tools pre-installed.
 
 ---
 
-## Step 4: Install Supabase CLI and Login
+## Step 4: Login to Supabase CLI
 
-In the Codespaces terminal (bottom of the screen), run these commands:
+In the Codespaces terminal (bottom of the screen), run this command:
 
 ```bash
-# Install Supabase CLI via Homebrew (pre-installed in Codespaces)
-brew install supabase/tap/supabase
-
 # Login to Supabase (this opens a browser window)
-supabase login
+npx supabase login
 ```
 
 When prompted, authorize the CLI in the browser window that opens.
+
+> **Note:** We use `npx` to run the Supabase CLI directly without installation. All subsequent `supabase` commands should be prefixed with `npx`.
 
 ---
 
@@ -82,7 +81,7 @@ When prompted, authorize the CLI in the browser window that opens.
 
 ```bash
 # Link this codebase to your Supabase project
-supabase link --project-ref YOUR_PROJECT_ID
+npx supabase link --project-ref YOUR_PROJECT_ID
 ```
 
 Replace `YOUR_PROJECT_ID` with the Project ID you saved earlier (the `xxxxx` part from your URL).
@@ -96,7 +95,7 @@ When prompted for the database password, enter the password you created in Step 
 This creates all the tables and configurations needed:
 
 ```bash
-supabase db push
+npx supabase db push
 ```
 
 Type `y` when asked to confirm.
@@ -106,7 +105,7 @@ Type `y` when asked to confirm.
 ## Step 7: Deploy Edge Functions
 
 ```bash
-supabase functions deploy
+npx supabase functions deploy
 ```
 
 This deploys all the backend functions. Wait for each one to complete.
@@ -234,7 +233,7 @@ Your opentape instance is now fully configured with:
 
 ### Need to redeploy after changes
 - Push changes to GitHub - Vercel auto-deploys
-- For edge functions: run `supabase functions deploy` again in Codespaces
+- For edge functions: run `npx supabase functions deploy` again in Codespaces
 
 ---
 
@@ -244,8 +243,8 @@ When new versions are released:
 
 1. Sync your fork with the original repository (GitHub has a "Sync fork" button)
 2. Open Codespaces on your updated fork
-3. Run `supabase db push` if there are new migrations
-4. Run `supabase functions deploy` if there are function changes
+3. Run `npx supabase db push` if there are new migrations
+4. Run `npx supabase functions deploy` if there are function changes
 5. Vercel auto-deploys frontend changes
 
 ---
