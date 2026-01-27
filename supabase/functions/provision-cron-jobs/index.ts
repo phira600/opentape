@@ -82,17 +82,19 @@ function compactDayRange(days: number[]): string {
 }
 
 /**
- * Build cron schedule from job configuration
- * Converts run_days, run_start_hour, run_end_hour to cron expression
+ * Build cron schedule from job configuration with DST buffer.
+ * Adds 1-hour buffer on each side to account for timezone DST shifts.
+ * The actual schedule enforcement happens via guard clause in fetch-trade-files.
  */
-function buildCronSchedule(job: {
+function buildCronScheduleWithBuffer(job: {
   run_days?: string[]
   run_start_hour?: number
   run_end_hour?: number
+  timezone?: string
 }): string {
   const runDays = job.run_days || ['mon', 'tue', 'wed', 'thu', 'fri']
-  const startHour = job.run_start_hour ?? 6
-  const endHour = job.run_end_hour ?? 21
+  const startHour = job.run_start_hour ?? 8
+  const endHour = job.run_end_hour ?? 17
   
   // Map day names to cron day numbers (0=Sun, 1=Mon, ..., 6=Sat)
   const dayMap: Record<string, number> = {
@@ -108,14 +110,19 @@ function buildCronSchedule(job: {
   // Build day-of-week field
   const daysField = compactDayRange(dayNumbers)
   
-  // Build hour range (endHour is exclusive, so we use endHour-1)
-  // e.g., run_start_hour=7, run_end_hour=18 → hours 7-17
-  const hourRange = startHour === endHour - 1 
-    ? startHour.toString() 
-    : `${startHour}-${endHour - 1}`
+  // Add 1-hour buffer on each side for DST transitions
+  // This ensures the cron fires even during clock change days
+  // The guard clause in fetch-trade-files will enforce the actual local schedule
+  const bufferStart = Math.max(0, startHour - 1)
+  const bufferEnd = Math.min(23, endHour) // endHour is exclusive, so no +1 needed
+  
+  // Build hour range with buffer
+  const hourRange = bufferStart === bufferEnd 
+    ? bufferStart.toString() 
+    : `${bufferStart}-${bufferEnd}`
   
   // Cron format: minute hour day-of-month month day-of-week
-  // Every minute within the hour range on specified days
+  // Every minute within the buffered hour range on specified days
   return `* ${hourRange} * * ${daysField}`
 }
 
@@ -192,7 +199,7 @@ Deno.serve(async (req) => {
       for (const fetchJob of fetchJobs as JobConfiguration[]) {
         try {
           const cronName = `fetch-${fetchJob.source_type.replace(/_/g, '-')}`
-          const schedule = buildCronSchedule(fetchJob)
+          const schedule = buildCronScheduleWithBuffer(fetchJob)
 
           console.log(`Building cron for ${fetchJob.name}: ${schedule}`)
 
