@@ -81,9 +81,20 @@ interface JobConfiguration {
   run_days?: string[];
   run_start_hour?: number;
   run_end_hour?: number;
+  timezone?: string;
   next_run_at?: string | null;
   last_result_details?: JobResultDetails | Record<string, unknown> | null;
 }
+
+// Supported timezones for scheduling
+const TIMEZONES = [
+  { value: "UTC", label: "UTC" },
+  { value: "Europe/London", label: "UK (London)" },
+  { value: "Europe/Stockholm", label: "Sweden (Stockholm)" },
+  { value: "Europe/Berlin", label: "Germany (Berlin)" },
+  { value: "Europe/Paris", label: "France (Paris)" },
+  { value: "America/New_York", label: "US Eastern" },
+];
 
 interface DataSourceTableProps {
   jobs: JobConfiguration[];
@@ -130,10 +141,12 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     run_days: string[];
     run_start_hour: number;
     run_end_hour: number;
+    timezone: string;
   }>({
     run_days: ["mon", "tue", "wed", "thu", "fri"],
-    run_start_hour: 6,
-    run_end_hour: 21,
+    run_start_hour: 8,
+    run_end_hour: 17,
+    timezone: "UTC",
   });
   
   // Job logs drawer state
@@ -364,6 +377,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
         run_days: jobScheduleConfig.run_days,
         run_start_hour: jobScheduleConfig.run_start_hour,
         run_end_hour: jobScheduleConfig.run_end_hour,
+        timezone: jobScheduleConfig.timezone,
       })
       .eq("id", job.id);
 
@@ -567,8 +581,9 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
 
   const formatJobSchedule = (job: JobConfiguration): string => {
     const days = job.run_days || ["mon", "tue", "wed", "thu", "fri"];
-    const startHour = job.run_start_hour ?? 6;
-    const endHour = job.run_end_hour ?? 21;
+    const startHour = job.run_start_hour ?? 8;
+    const endHour = job.run_end_hour ?? 17;
+    const timezone = job.timezone || "UTC";
     
     const isWeekdays = days.length === 5 && 
       ["mon", "tue", "wed", "thu", "fri"].every(d => days.includes(d));
@@ -576,7 +591,10 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     
     const daysStr = isAllDays ? "Daily" : isWeekdays ? "Mon-Fri" : days.map(d => d.charAt(0).toUpperCase() + d.slice(1, 3)).join(", ");
     
-    return `${String(startHour).padStart(2, "0")}:00-${String(endHour).padStart(2, "0")}:00 (${daysStr})`;
+    // Get short timezone label
+    const tzLabel = TIMEZONES.find(tz => tz.value === timezone)?.label.split(" ")[0] || timezone;
+    
+    return `${String(startHour).padStart(2, "0")}:00-${String(endHour).padStart(2, "0")}:00 ${tzLabel} (${daysStr})`;
   };
 
   const formatSourceType = (sourceType: string): string => {
@@ -913,8 +931,9 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                       setEditingJobSchedule(job.id);
                       setJobScheduleConfig({
                         run_days: job.run_days || ["mon", "tue", "wed", "thu", "fri"],
-                        run_start_hour: job.run_start_hour ?? 6,
-                        run_end_hour: job.run_end_hour ?? 21,
+                        run_start_hour: job.run_start_hour ?? 8,
+                        run_end_hour: job.run_end_hour ?? 17,
+                        timezone: job.timezone || "UTC",
                       });
                     } else {
                       setEditingJobSchedule(null);
@@ -926,10 +945,28 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                         <Settings className="h-3 w-3 ml-1 opacity-50" />
                       </Button>
                     </PopoverTrigger>
-                    <PopoverContent className="w-80">
+                    <PopoverContent className="w-80 bg-popover">
                       <div className="space-y-4">
                         <h4 className="font-medium">Schedule Configuration</h4>
                         
+                        <div className="space-y-2">
+                          <Label className="text-sm">Timezone</Label>
+                          <select
+                            className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2"
+                            value={jobScheduleConfig.timezone}
+                            onChange={(e) => setJobScheduleConfig(prev => ({
+                              ...prev,
+                              timezone: e.target.value,
+                            }))}
+                          >
+                            {TIMEZONES.map((tz) => (
+                              <option key={tz.value} value={tz.value}>
+                                {tz.label}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
                         <div className="space-y-2">
                           <Label className="text-sm">Active Days</Label>
                           <div className="flex flex-wrap gap-2">
@@ -950,7 +987,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
 
                         <div className="grid grid-cols-2 gap-3">
                           <div className="space-y-2">
-                            <Label className="text-sm">Start Hour (UTC)</Label>
+                            <Label className="text-sm">Start Hour</Label>
                             <Input
                               type="number"
                               min={0}
@@ -963,7 +1000,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                             />
                           </div>
                           <div className="space-y-2">
-                            <Label className="text-sm">End Hour (UTC)</Label>
+                            <Label className="text-sm">End Hour</Label>
                             <Input
                               type="number"
                               min={0}
@@ -978,7 +1015,8 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                         </div>
 
                         <p className="text-xs text-muted-foreground">
-                          Job will run every {job.fetch_interval_seconds || 60}s during active hours
+                          Times are in {TIMEZONES.find(tz => tz.value === jobScheduleConfig.timezone)?.label || jobScheduleConfig.timezone}.
+                          DST changes are handled automatically.
                         </p>
 
                         <Button size="sm" onClick={() => handleJobScheduleUpdate(job)}>

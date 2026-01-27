@@ -269,6 +269,7 @@ export type Database = {
           run_start_hour: number | null
           source_type: string
           source_url: string
+          timezone: string | null
           updated_at: string
         }
         Insert: {
@@ -287,6 +288,7 @@ export type Database = {
           run_start_hour?: number | null
           source_type: string
           source_url: string
+          timezone?: string | null
           updated_at?: string
         }
         Update: {
@@ -305,6 +307,7 @@ export type Database = {
           run_start_hour?: number | null
           source_type?: string
           source_url?: string
+          timezone?: string | null
           updated_at?: string
         }
         Relationships: []

@@ -16,6 +16,64 @@ interface JobConfiguration {
   run_days?: string[]
   run_start_hour?: number
   run_end_hour?: number
+  timezone?: string
+}
+
+/**
+ * Check if the current time is within the job's configured local schedule.
+ * Uses Intl.DateTimeFormat for automatic DST handling.
+ */
+function isWithinLocalSchedule(job: JobConfiguration): { 
+  withinSchedule: boolean
+  localTime: string
+  reason?: string 
+} {
+  const now = new Date()
+  const timezone = job.timezone || 'UTC'
+  
+  // Get current time in the job's configured timezone
+  const localTimeStr = now.toLocaleString('en-GB', { 
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    weekday: 'short',
+    hour12: false
+  })
+  
+  // Parse local hour and day using Intl.DateTimeFormat
+  const formatter = new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    hour: 'numeric',
+    weekday: 'short',
+    hour12: false
+  })
+  const parts = formatter.formatToParts(now)
+  const localHour = parseInt(parts.find(p => p.type === 'hour')?.value || '0')
+  const localDay = parts.find(p => p.type === 'weekday')?.value?.toLowerCase() || ''
+  
+  const runDays = job.run_days || ['mon', 'tue', 'wed', 'thu', 'fri']
+  const runStartHour = job.run_start_hour ?? 8
+  const runEndHour = job.run_end_hour ?? 17
+  
+  // Check day
+  if (!runDays.includes(localDay)) {
+    return { 
+      withinSchedule: false, 
+      localTime: localTimeStr,
+      reason: `${localDay} not in schedule [${runDays.join(',')}]`
+    }
+  }
+  
+  // Check hours (endHour is exclusive)
+  if (localHour < runStartHour || localHour >= runEndHour) {
+    return { 
+      withinSchedule: false, 
+      localTime: localTimeStr,
+      reason: `${localHour}:00 outside ${runStartHour}:00-${runEndHour}:00`
+    }
+  }
+  
+  return { withinSchedule: true, localTime: localTimeStr }
 }
 
 // Calculate next run time based on job schedule
@@ -125,6 +183,29 @@ Deno.serve(async (req) => {
 
     for (const job of jobs as JobConfiguration[]) {
       console.log(`Processing job: ${job.name} (${job.source_type})`)
+
+      // Guard clause: Check if within local schedule (DST-aware)
+      const scheduleCheck = isWithinLocalSchedule(job)
+      if (!scheduleCheck.withinSchedule) {
+        console.log(`Skipping ${job.name}: ${scheduleCheck.reason} (${scheduleCheck.localTime} ${job.timezone || 'UTC'})`)
+        
+        // Update status to 'skipped' with reason
+        await supabase
+          .from('job_configurations')
+          .update({ 
+            last_status: 'skipped',
+            last_run_at: new Date().toISOString(),
+            next_run_at: calculateNextRunTime(job)
+          })
+          .eq('id', job.id)
+        
+        results.push({ 
+          job_id: job.id, 
+          status: 'skipped', 
+          reason: scheduleCheck.reason 
+        })
+        continue
+      }
 
       // Update job status to running
       await supabase
