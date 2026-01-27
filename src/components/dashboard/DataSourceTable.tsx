@@ -142,11 +142,13 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     run_start_hour: number;
     run_end_hour: number;
     timezone: string;
+    fetch_interval_minutes: number;
   }>({
     run_days: ["mon", "tue", "wed", "thu", "fri"],
     run_start_hour: 8,
     run_end_hour: 17,
     timezone: "UTC",
+    fetch_interval_minutes: 1,
   });
   
   // Job logs drawer state
@@ -378,6 +380,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
         run_start_hour: jobScheduleConfig.run_start_hour,
         run_end_hour: jobScheduleConfig.run_end_hour,
         timezone: jobScheduleConfig.timezone,
+        fetch_interval_seconds: jobScheduleConfig.fetch_interval_minutes * 60,
       })
       .eq("id", job.id);
 
@@ -584,6 +587,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     const startHour = job.run_start_hour ?? 8;
     const endHour = job.run_end_hour ?? 17;
     const timezone = job.timezone || "UTC";
+    const intervalMins = Math.round((job.fetch_interval_seconds || 60) / 60);
     
     const isWeekdays = days.length === 5 && 
       ["mon", "tue", "wed", "thu", "fri"].every(d => days.includes(d));
@@ -594,7 +598,9 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     // Get short timezone label
     const tzLabel = TIMEZONES.find(tz => tz.value === timezone)?.label.split(" ")[0] || timezone;
     
-    return `${String(startHour).padStart(2, "0")}:00-${String(endHour).padStart(2, "0")}:00 ${tzLabel} (${daysStr})`;
+    const intervalStr = intervalMins === 1 ? "1m" : `${intervalMins}m`;
+    
+    return `${String(startHour).padStart(2, "0")}:00-${String(endHour).padStart(2, "0")}:00 ${tzLabel} @${intervalStr} (${daysStr})`;
   };
 
   const formatSourceType = (sourceType: string): string => {
@@ -852,8 +858,8 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                           </div>
 
                           <div className="space-y-1">
-                            <Label className="text-xs text-muted-foreground">Fetch Interval</Label>
-                            <p className="text-sm">{job.fetch_interval_seconds || 60} seconds</p>
+                            <Label className="text-xs text-muted-foreground">Fetch Frequency</Label>
+                            <p className="text-sm">Every {Math.round((job.fetch_interval_seconds || 60) / 60)} minute{Math.round((job.fetch_interval_seconds || 60) / 60) !== 1 ? 's' : ''}</p>
                           </div>
 
                           {job.last_error && (
@@ -934,6 +940,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                         run_start_hour: job.run_start_hour ?? 8,
                         run_end_hour: job.run_end_hour ?? 17,
                         timezone: job.timezone || "UTC",
+                        fetch_interval_minutes: Math.round((job.fetch_interval_seconds || 60) / 60),
                       });
                     } else {
                       setEditingJobSchedule(null);
@@ -965,6 +972,27 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                               </option>
                             ))}
                           </select>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label className="text-sm">Fetch Frequency</Label>
+                          <div className="flex items-center gap-2">
+                            <Input
+                              type="number"
+                              min={1}
+                              max={60}
+                              className="w-20"
+                              value={jobScheduleConfig.fetch_interval_minutes}
+                              onChange={(e) => setJobScheduleConfig(prev => ({
+                                ...prev,
+                                fetch_interval_minutes: Math.max(1, Math.min(60, parseInt(e.target.value) || 1)),
+                              }))}
+                            />
+                            <span className="text-sm text-muted-foreground">minutes</span>
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            How often to check for new trade data (1-60 min)
+                          </p>
                         </div>
 
                         <div className="space-y-2">
