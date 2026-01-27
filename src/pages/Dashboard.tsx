@@ -95,8 +95,6 @@ export default function Dashboard() {
           </TabsList>
 
           <TabsContent value="sources" className="space-y-4">
-            <h2 className="text-lg font-semibold">Data Jobs</h2>
-
             {isLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="h-6 w-6 animate-spin text-primary" />
