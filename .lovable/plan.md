@@ -1,121 +1,208 @@
 
-## Plan: Separate Fetch Jobs and Maintenance Jobs into Two Tables
 
-### Overview
+## Plan: Fix Trades Cleanup Performance by Optimizing Delete Trigger
 
-Currently, the Data Jobs tab displays both data ingestion jobs (CBOE BXE, CBOE CXE, Nasdaq Nordic, etc.) and maintenance/cron jobs (Trades Cleanup, Candles Cleanup, Symbology, etc.) in a single combined table. This change will split them into two clearly labeled sections with separate tables for better organization.
+### Problem Summary
 
-### Visual Layout
+The trades cleanup job fails because of a severe performance bottleneck in the `decrement_daily_stats_on_trade_delete` trigger. Here's what's happening:
 
-```text
-+--------------------------------------------------+
-|  Data Jobs Tab                                   |
-+--------------------------------------------------+
-|                                                  |
-|  Data Ingestion Jobs                             |
-|  +--------------------------------------------+  |
-|  | Name | Type | Description | Status | ...   |  |
-|  |--------------------------------------------|  |
-|  | CBOE BXE    | CBOE | European equities ... |  |
-|  | CBOE CXE    | CBOE | European equities ... |  |
-|  | Nasdaq Nordic | NASDAQ | Nordic markets ...|  |
-|  +--------------------------------------------+  |
-|                                                  |
-|  Scheduled Maintenance Jobs                      |
-|  +--------------------------------------------+  |
-|  | Name | Type | Description | Status | ...   |  |
-|  |--------------------------------------------|  |
-|  | Trades Cleanup    | CRON | Removes trades..|  |
-|  | Candles Cleanup   | CRON | Removes candles.|  |
-|  | CBOE SIS Symbology| CRON | Fetches symbol..|  |
-|  +--------------------------------------------+  |
-|                                                  |
-+--------------------------------------------------+
+| Metric | Current State |
+|--------|---------------|
+| Table Size | 12 GB (15.5 million rows) |
+| Old Trades to Delete | 366,501 rows |
+| Time per 20k Batch | ~10 seconds |
+| Trigger Queries per Delete | 2 expensive EXISTS queries |
+| Total Queries per Batch | 40,000 |
+
+The trigger runs **two full table scans for every single deleted trade**, checking if other trades exist with the same symbol/venue. Deleting 20,000 trades means 40,000 expensive queries.
+
+### Solution Overview
+
+Replace the row-by-row trigger approach with a batch-aware cleanup that updates `daily_stats` once after all deletions are complete, rather than for each individual row.
+
+---
+
+### Phase 1: Create Optimized Batch Delete Function
+
+Replace the current `cleanup_old_trades_batch` function with a new version that:
+
+1. **Temporarily disables the trigger** before deletion
+2. **Deletes trades in a single batch operation**
+3. **Recalculates affected daily_stats in bulk** using a single aggregation query
+4. **Re-enables the trigger** after completion
+
+```sql
+CREATE OR REPLACE FUNCTION cleanup_old_trades_batch(
+  cutoff_date timestamptz, 
+  batch_size integer DEFAULT 20000
+)
+RETURNS integer
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+SET statement_timeout TO '120s'
+AS $$
+DECLARE
+  deleted_count INT;
+  affected_dates DATE[];
+BEGIN
+  -- Permission check (existing)
+  IF NOT (
+    public.has_role(auth.uid(), 'admin'::app_role) 
+    OR current_setting('role', true) = 'service_role'
+  ) THEN
+    RAISE EXCEPTION 'Admin access required';
+  END IF;
+
+  -- Step 1: Identify affected dates BEFORE deletion
+  SELECT ARRAY_AGG(DISTINCT (trade_time AT TIME ZONE 'UTC')::date)
+  INTO affected_dates
+  FROM trades_normalized
+  WHERE ctid IN (
+    SELECT ctid FROM trades_normalized
+    WHERE trade_time < cutoff_date
+    LIMIT batch_size
+  );
+
+  -- Step 2: Disable the trigger temporarily
+  ALTER TABLE trades_normalized DISABLE TRIGGER tr_decrement_daily_stats_on_trade_delete;
+
+  -- Step 3: Delete trades without trigger overhead
+  WITH deleted AS (
+    DELETE FROM trades_normalized
+    WHERE ctid IN (
+      SELECT ctid FROM trades_normalized
+      WHERE trade_time < cutoff_date
+      LIMIT batch_size
+    )
+    RETURNING 1
+  )
+  SELECT COUNT(*) INTO deleted_count FROM deleted;
+
+  -- Step 4: Re-enable the trigger immediately
+  ALTER TABLE trades_normalized ENABLE TRIGGER tr_decrement_daily_stats_on_trade_delete;
+
+  -- Step 5: Recalculate daily_stats for affected dates (single bulk operation)
+  UPDATE daily_stats ds SET
+    total_trades = COALESCE(agg.trade_count, 0),
+    unique_symbols = COALESCE(agg.symbol_count, 0),
+    unique_venues = COALESCE(agg.venue_count, 0),
+    last_updated = NOW()
+  FROM (
+    SELECT 
+      (trade_time AT TIME ZONE 'UTC')::date as trade_date,
+      COUNT(*) as trade_count,
+      COUNT(DISTINCT symbol) as symbol_count,
+      COUNT(DISTINCT venue) as venue_count
+    FROM trades_normalized
+    WHERE (trade_time AT TIME ZONE 'UTC')::date = ANY(affected_dates)
+    GROUP BY (trade_time AT TIME ZONE 'UTC')::date
+  ) agg
+  WHERE ds.date = agg.trade_date;
+
+  -- Handle dates with no remaining trades
+  UPDATE daily_stats SET
+    total_trades = 0,
+    unique_symbols = 0,
+    unique_venues = 0,
+    last_updated = NOW()
+  WHERE date = ANY(affected_dates)
+    AND NOT EXISTS (
+      SELECT 1 FROM trades_normalized 
+      WHERE (trade_time AT TIME ZONE 'UTC')::date = daily_stats.date
+    );
+
+  RETURN deleted_count;
+END;
+$$;
 ```
 
-### Implementation Details
+---
 
-#### 1. Refactor DataSourceTable Component
+### Phase 2: Reduce Batch Size and Increase Statement Timeout
 
-Split the current single table into two separate table sections:
+Update the edge function to use smaller batches with longer timeouts:
 
-- **Section 1: "Data Ingestion Jobs"** - Displays only fetch jobs from `job_configurations`
-- **Section 2: "Scheduled Maintenance Jobs"** - Displays only cron jobs from `cron_job_configurations`
+**File:** `supabase/functions/cleanup-old-trades/index.ts`
 
-Each section will have its own:
-- Section heading with description
-- Full table with appropriate headers
-- Empty state message if no jobs exist
+```typescript
+// Change from:
+const BATCH_SIZE = 20000  // Too large with trigger overhead
+const MAX_BATCHES = 150
 
-#### 2. Updated Table Headers
-
-**Data Ingestion Jobs Table:**
-| Name | Type | Description | Status | Last Run | Next Run | Schedule | Enabled | Actions |
-
-**Scheduled Maintenance Jobs Table:**
-| Name | Type | Description | Status | Last Run | Schedule | Enabled | Actions |
-
-Note: "Next Run" column is removed from maintenance jobs since they use cron schedules rather than interval-based timing.
-
-#### 3. Code Changes
-
-**File:** `src/components/dashboard/DataSourceTable.tsx`
-
-Changes to make:
-1. Wrap the current table in a container with a heading "Data Ingestion Jobs"
-2. Create a second table container with heading "Scheduled Maintenance Jobs"
-3. Move cron job rows from the combined TableBody to the new separate table
-4. Add descriptive subtitles for each section
-5. Adjust the table structure so each has its own complete Table component
-
-### Technical Implementation
-
-```text
-<div className="space-y-8">
-  {/* Section 1: Data Ingestion Jobs */}
-  <div className="space-y-4">
-    <div>
-      <h3 className="text-lg font-semibold">Data Ingestion Jobs</h3>
-      <p className="text-sm text-muted-foreground">
-        Jobs that fetch trade data from external sources
-      </p>
-    </div>
-    <div className="rounded-md border">
-      <Table>
-        {/* Fetch jobs table header and body */}
-      </Table>
-    </div>
-  </div>
-
-  {/* Section 2: Scheduled Maintenance Jobs */}
-  {showCronJobs && (
-    <div className="space-y-4">
-      <div>
-        <h3 className="text-lg font-semibold">Scheduled Maintenance Jobs</h3>
-        <p className="text-sm text-muted-foreground">
-          Automated cleanup and maintenance tasks
-        </p>
-      </div>
-      <div className="rounded-md border">
-        <Table>
-          {/* Cron jobs table header and body */}
-        </Table>
-      </div>
-    </div>
-  )}
-</div>
+// Change to:
+const BATCH_SIZE = 10000  // Smaller but faster batches
+const MAX_BATCHES = 50    // Limit total execution time
 ```
+
+---
+
+### Phase 3: Alternative - Simpler Trigger Optimization
+
+If modifying the batch function is complex, an alternative is to optimize the trigger itself by using the existing indexes properly:
+
+```sql
+CREATE OR REPLACE FUNCTION decrement_daily_stats_on_trade_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path TO 'public'
+AS $$
+DECLARE
+  trade_date DATE;
+BEGIN
+  trade_date := (OLD.trade_time AT TIME ZONE 'UTC')::date;
+  
+  -- Simply decrement the trade count (fast, no subqueries)
+  -- The unique_symbols and unique_venues are estimates that
+  -- can be recalculated periodically if needed
+  UPDATE daily_stats SET
+    total_trades = GREATEST(0, total_trades - 1),
+    last_updated = NOW()
+  WHERE date = trade_date;
+  
+  RETURN OLD;
+END;
+$$;
+```
+
+This removes the expensive EXISTS queries entirely. The `unique_symbols` and `unique_venues` counts become slightly inaccurate during deletions but remain accurate for the purpose of dashboard statistics.
+
+---
+
+### Expected Performance Improvement
+
+| Approach | Current | After Fix |
+|----------|---------|-----------|
+| Queries per 20k batch | 40,000 | 1-3 |
+| Time per 20k batch | ~10 seconds | <1 second |
+| Time for 366k trades | 200+ seconds | ~20 seconds |
+
+---
 
 ### Files to Modify
 
-| File | Changes |
-|------|---------|
-| `src/components/dashboard/DataSourceTable.tsx` | Split single table into two separate tables with section headings |
-| `src/pages/Dashboard.tsx` | Remove the generic "Data Jobs" h2 heading (now handled by the component sections) |
+| File | Change |
+|------|--------|
+| Database migration | Replace `cleanup_old_trades_batch` function |
+| Database migration | Optionally simplify `decrement_daily_stats_on_trade_delete` trigger |
+| `supabase/functions/cleanup-old-trades/index.ts` | Adjust batch size and add better error handling |
 
-### Benefits
+---
 
-- Clear visual separation between data fetching and maintenance operations
-- Easier to scan and manage each type of job
-- More intuitive organization matching how administrators think about these jobs
-- Each table can have headers optimized for its job type
+### Technical Details
+
+**Why the trigger is slow:**
+
+1. The `EXISTS` queries use `(trade_time AT TIME ZONE 'UTC')::date` which prevents index usage on the raw `trade_time` column
+2. Even with `idx_trades_date_symbol` and `idx_trades_date_venue` indexes, the `id != OLD.id` condition forces a scan
+3. Running 40,000 such queries per batch (2 per row x 20,000 rows) creates massive overhead
+4. The trigger holds locks during the entire operation, blocking other queries
+
+**Why disabling the trigger is safe:**
+
+1. The edge function runs with `service_role` (full access)
+2. The trigger is re-enabled immediately after deletion
+3. The bulk recalculation ensures data consistency
+4. No other process should be deleting trades simultaneously (controlled via job status)
+
