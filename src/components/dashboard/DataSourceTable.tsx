@@ -757,23 +757,31 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
   };
 
   return (
-    <div className="space-y-6">
-      <div className="rounded-md border">
-        <Table>
-          <TableHeader>
-            <TableRow>
-              <TableHead>Name</TableHead>
-              <TableHead>Type</TableHead>
-              <TableHead>Description</TableHead>
-              <TableHead>Status</TableHead>
-              <TableHead>Last Run</TableHead>
-              <TableHead>Next Run</TableHead>
-              <TableHead>Schedule</TableHead>
-              <TableHead>Enabled</TableHead>
-              <TableHead className="text-right">Actions</TableHead>
-            </TableRow>
-          </TableHeader>
-          <TableBody>
+    <div className="space-y-8">
+      {/* Section 1: Data Ingestion Jobs */}
+      <div className="space-y-4">
+        <div>
+          <h3 className="text-lg font-semibold">Data Ingestion Jobs</h3>
+          <p className="text-sm text-muted-foreground">
+            Jobs that fetch trade data from external sources
+          </p>
+        </div>
+        <div className="rounded-md border">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>Name</TableHead>
+                <TableHead>Type</TableHead>
+                <TableHead>Description</TableHead>
+                <TableHead>Status</TableHead>
+                <TableHead>Last Run</TableHead>
+                <TableHead>Next Run</TableHead>
+                <TableHead>Schedule</TableHead>
+                <TableHead>Enabled</TableHead>
+                <TableHead className="text-right">Actions</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
             {jobs.map((job) => (
               <TableRow key={job.id}>
                 <TableCell className="font-medium">
@@ -1014,219 +1022,261 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                 </TableCell>
               </TableRow>
             ))}
+            </TableBody>
+          </Table>
+        </div>
 
-        {showCronJobs && cronJobs.map((cronJob) => (
-              <TableRow key={cronJob.id} className="bg-muted/30">
-                <TableCell className="font-medium">{cronJob.name}</TableCell>
-                <TableCell>
-                  <Badge variant="secondary">
-                    <Calendar className="h-3 w-3 mr-1" />
-                    CRON
-                  </Badge>
-                </TableCell>
-                <TableCell>
-                  <span className="text-sm text-muted-foreground">{cronJob.description}</span>
-                </TableCell>
-                <TableCell>
-                  {cronJob.last_status === "success" ? (
-                    <Badge variant="default" className="bg-green-500">
-                      <CheckCircle2 className="h-3 w-3 mr-1" />
-                      Success
-                    </Badge>
-                  ) : cronJob.last_status === "error" ? (
-                    <Badge variant="destructive">
-                      <AlertCircle className="h-3 w-3 mr-1" />
-                      Error
-                    </Badge>
-                  ) : (
-                    <Badge variant="outline">Scheduled</Badge>
-                  )}
-                </TableCell>
-                <TableCell>
-                  {cronJob.last_run_at ? (
-                    <span className="text-sm text-muted-foreground flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {formatDistanceToNow(new Date(cronJob.last_run_at), { addSuffix: true })}
-                    </span>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">Never</span>
-                  )}
-                </TableCell>
-                <TableCell>
-                  <Popover open={editingSchedule === cronJob.id} onOpenChange={(open) => {
-                    if (open) {
-                      setEditingSchedule(cronJob.id);
-                      setScheduleValue(cronJob.schedule);
-                      setRetentionDays(cronJob.retention_days || 30);
-                    } else {
-                      setEditingSchedule(null);
-                    }
-                  }}>
-                    <PopoverTrigger asChild>
-                      <Button variant="ghost" size="sm" className="h-auto p-1 font-normal">
-                        <span className="text-sm text-muted-foreground">
-                          {parseCronSchedule(cronJob.schedule)}
-                          {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles" || cronJob.id === "cleanup-old-activity-logs" || cronJob.id === "cleanup-old-processed-files") && cronJob.retention_days && (
-                            <span className="ml-1">({cronJob.retention_days}d)</span>
-                          )}
+        {jobs.length === 0 && (
+          <p className="text-muted-foreground text-center py-8">
+            No data ingestion jobs configured.
+          </p>
+        )}
+      </div>
+
+      {/* Section 2: Scheduled Maintenance Jobs */}
+      {showCronJobs && (
+        <div className="space-y-4">
+          <div>
+            <h3 className="text-lg font-semibold">Scheduled Maintenance Jobs</h3>
+            <p className="text-sm text-muted-foreground">
+              Automated cleanup and maintenance tasks
+            </p>
+          </div>
+          <div className="rounded-md border">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Name</TableHead>
+                  <TableHead>Type</TableHead>
+                  <TableHead>Description</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Last Run</TableHead>
+                  <TableHead>Schedule</TableHead>
+                  <TableHead>Enabled</TableHead>
+                  <TableHead className="text-right">Actions</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {cronJobs.map((cronJob) => (
+                  <TableRow key={cronJob.id}>
+                    <TableCell className="font-medium">{cronJob.name}</TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">
+                        <Calendar className="h-3 w-3 mr-1" />
+                        CRON
+                      </Badge>
+                    </TableCell>
+                    <TableCell>
+                      <span className="text-sm text-muted-foreground">{cronJob.description}</span>
+                    </TableCell>
+                    <TableCell>
+                      {cronJob.last_status === "success" ? (
+                        <Badge variant="default" className="bg-green-500">
+                          <CheckCircle2 className="h-3 w-3 mr-1" />
+                          Success
+                        </Badge>
+                      ) : cronJob.last_status === "error" ? (
+                        <Badge variant="destructive">
+                          <AlertCircle className="h-3 w-3 mr-1" />
+                          Error
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Scheduled</Badge>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      {cronJob.last_run_at ? (
+                        <span className="text-sm text-muted-foreground flex items-center gap-1">
+                          <Clock className="h-3 w-3" />
+                          {formatDistanceToNow(new Date(cronJob.last_run_at), { addSuffix: true })}
                         </span>
-                        <Settings className="h-3 w-3 ml-1 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent className="w-80">
-                      <div className="space-y-4">
-                        <h4 className="font-medium">Edit Configuration</h4>
-                        
-                        <div className="space-y-2">
-                          <Label className="text-sm">Cron Schedule</Label>
-                          <p className="text-xs text-muted-foreground">
-                            Format: minute hour day month weekday
-                          </p>
-                          <Input
-                            value={scheduleValue}
-                            onChange={(e) => setScheduleValue(e.target.value)}
-                            placeholder="0 0 * * *"
-                          />
-                          <div className="text-xs text-muted-foreground space-y-1">
-                            <p><code>0 2 * * *</code> = Daily at 02:00 UTC</p>
-                            <p><code>0 8 * * 1-5</code> = Weekdays at 08:00 UTC</p>
-                            <p><code>*/5 * * * *</code> = Every 5 minutes</p>
-                          </div>
-                        </div>
-
-                        {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles" || cronJob.id === "cleanup-old-activity-logs" || cronJob.id === "cleanup-old-processed-files") && (
-                          <div className="space-y-2">
-                            <Label className="text-sm">Retention Period (days)</Label>
-                            <Input
-                              type="number"
-                              min={1}
-                              max={365}
-                              value={retentionDays}
-                              onChange={(e) => setRetentionDays(parseInt(e.target.value) || 30)}
-                            />
-                            <p className="text-xs text-muted-foreground">
-                              {cronJob.id === "cleanup-old-trades" 
-                                ? "Trades older than this will be deleted"
-                                : "Candles older than this will be deleted"}
-                            </p>
-                          </div>
-                        )}
-
-                        {cronJob.id === "recreate-candles" && (
-                          <div className="space-y-3">
-                            <Label className="text-sm">Backfill Date Range</Label>
-                            <p className="text-xs text-muted-foreground">
-                              Select the date range to recreate candles from trade data
-                            </p>
+                      ) : (
+                        <span className="text-sm text-muted-foreground">Never</span>
+                      )}
+                    </TableCell>
+                    <TableCell>
+                      <Popover open={editingSchedule === cronJob.id} onOpenChange={(open) => {
+                        if (open) {
+                          setEditingSchedule(cronJob.id);
+                          setScheduleValue(cronJob.schedule);
+                          setRetentionDays(cronJob.retention_days || 30);
+                        } else {
+                          setEditingSchedule(null);
+                        }
+                      }}>
+                        <PopoverTrigger asChild>
+                          <Button variant="ghost" size="sm" className="h-auto p-1 font-normal">
+                            <span className="text-sm text-muted-foreground">
+                              {parseCronSchedule(cronJob.schedule)}
+                              {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles" || cronJob.id === "cleanup-old-activity-logs" || cronJob.id === "cleanup-old-processed-files") && cronJob.retention_days && (
+                                <span className="ml-1">({cronJob.retention_days}d)</span>
+                              )}
+                            </span>
+                            <Settings className="h-3 w-3 ml-1 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-80">
+                          <div className="space-y-4">
+                            <h4 className="font-medium">Edit Configuration</h4>
                             
                             <div className="space-y-2">
-                              <Label className="text-xs">From Date</Label>
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className={cn(
-                                      "w-full justify-start text-left font-normal",
-                                      !candleFromDate && "text-muted-foreground"
-                                    )}
-                                  >
-                                    <CalendarIcon className="mr-2 h-4 w-4" />
-                                    {candleFromDate ? format(candleFromDate, "PPP") : "Pick a date"}
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="start">
-                                  <CalendarComponent
-                                    mode="single"
-                                    selected={candleFromDate}
-                                    onSelect={setCandleFromDate}
-                                    disabled={(date) => date > new Date()}
-                                    initialFocus
-                                    className={cn("p-3 pointer-events-auto")}
-                                  />
-                                </PopoverContent>
-                              </Popover>
+                              <Label className="text-sm">Cron Schedule</Label>
+                              <p className="text-xs text-muted-foreground">
+                                Format: minute hour day month weekday
+                              </p>
+                              <Input
+                                value={scheduleValue}
+                                onChange={(e) => setScheduleValue(e.target.value)}
+                                placeholder="0 0 * * *"
+                              />
+                              <div className="text-xs text-muted-foreground space-y-1">
+                                <p><code>0 2 * * *</code> = Daily at 02:00 UTC</p>
+                                <p><code>0 8 * * 1-5</code> = Weekdays at 08:00 UTC</p>
+                                <p><code>*/5 * * * *</code> = Every 5 minutes</p>
+                              </div>
                             </div>
 
-                            <div className="space-y-2">
-                              <Label className="text-xs">To Date</Label>
-                              <Popover>
-                                <PopoverTrigger asChild>
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    className={cn(
-                                      "w-full justify-start text-left font-normal",
-                                      !candleToDate && "text-muted-foreground"
-                                    )}
-                                  >
-                                    <CalendarIcon className="mr-2 h-4 w-4" />
-                                    {candleToDate ? format(candleToDate, "PPP") : "Pick a date"}
-                                  </Button>
-                                </PopoverTrigger>
-                                <PopoverContent className="w-auto p-0" align="start">
-                                  <CalendarComponent
-                                    mode="single"
-                                    selected={candleToDate}
-                                    onSelect={setCandleToDate}
-                                    disabled={(date) => date > new Date() || (candleFromDate && date < candleFromDate)}
-                                    initialFocus
-                                    className={cn("p-3 pointer-events-auto")}
-                                  />
-                                </PopoverContent>
-                              </Popover>
-                            </div>
+                            {(cronJob.id === "cleanup-old-trades" || cronJob.id === "cleanup-old-candles" || cronJob.id === "cleanup-old-activity-logs" || cronJob.id === "cleanup-old-processed-files") && (
+                              <div className="space-y-2">
+                                <Label className="text-sm">Retention Period (days)</Label>
+                                <Input
+                                  type="number"
+                                  min={1}
+                                  max={365}
+                                  value={retentionDays}
+                                  onChange={(e) => setRetentionDays(parseInt(e.target.value) || 30)}
+                                />
+                                <p className="text-xs text-muted-foreground">
+                                  {cronJob.id === "cleanup-old-trades" 
+                                    ? "Trades older than this will be deleted"
+                                    : "Candles older than this will be deleted"}
+                                </p>
+                              </div>
+                            )}
 
-                            <p className="text-xs text-muted-foreground">
-                              Select dates and click Run to backfill candles
-                            </p>
+                            {cronJob.id === "recreate-candles" && (
+                              <div className="space-y-3">
+                                <Label className="text-sm">Backfill Date Range</Label>
+                                <p className="text-xs text-muted-foreground">
+                                  Select the date range to recreate candles from trade data
+                                </p>
+                                
+                                <div className="space-y-2">
+                                  <Label className="text-xs">From Date</Label>
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className={cn(
+                                          "w-full justify-start text-left font-normal",
+                                          !candleFromDate && "text-muted-foreground"
+                                        )}
+                                      >
+                                        <CalendarIcon className="mr-2 h-4 w-4" />
+                                        {candleFromDate ? format(candleFromDate, "PPP") : "Pick a date"}
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-auto p-0" align="start">
+                                      <CalendarComponent
+                                        mode="single"
+                                        selected={candleFromDate}
+                                        onSelect={setCandleFromDate}
+                                        disabled={(date) => date > new Date()}
+                                        initialFocus
+                                        className={cn("p-3 pointer-events-auto")}
+                                      />
+                                    </PopoverContent>
+                                  </Popover>
+                                </div>
+
+                                <div className="space-y-2">
+                                  <Label className="text-xs">To Date</Label>
+                                  <Popover>
+                                    <PopoverTrigger asChild>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        className={cn(
+                                          "w-full justify-start text-left font-normal",
+                                          !candleToDate && "text-muted-foreground"
+                                        )}
+                                      >
+                                        <CalendarIcon className="mr-2 h-4 w-4" />
+                                        {candleToDate ? format(candleToDate, "PPP") : "Pick a date"}
+                                      </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-auto p-0" align="start">
+                                      <CalendarComponent
+                                        mode="single"
+                                        selected={candleToDate}
+                                        onSelect={setCandleToDate}
+                                        disabled={(date) => date > new Date() || (candleFromDate && date < candleFromDate)}
+                                        initialFocus
+                                        className={cn("p-3 pointer-events-auto")}
+                                      />
+                                    </PopoverContent>
+                                  </Popover>
+                                </div>
+
+                                <p className="text-xs text-muted-foreground">
+                                  Select dates and click Run to backfill candles
+                                </p>
+                              </div>
+                            )}
+
+                            <Button size="sm" onClick={() => handleScheduleUpdate(cronJob)}>
+                              Save
+                            </Button>
                           </div>
-                        )}
-
-                        <Button size="sm" onClick={() => handleScheduleUpdate(cronJob)}>
-                          Save
+                        </PopoverContent>
+                      </Popover>
+                    </TableCell>
+                    <TableCell>
+                      <Switch 
+                        checked={cronJob.is_enabled} 
+                        onCheckedChange={(enabled) => handleCronToggle(cronJob, enabled)}
+                        disabled={togglingId === cronJob.id}
+                      />
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex items-center justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => fetchCronJobLogs(cronJob)}
+                          title="View logs"
+                        >
+                          <FileText className="h-4 w-4" />
+                        </Button>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => handleRunCronJob(cronJob)}
+                          disabled={runningCronId === cronJob.id}
+                          title="Run now"
+                        >
+                          {runningCronId === cronJob.id ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <RefreshCw className="h-4 w-4" />
+                          )}
                         </Button>
                       </div>
-                    </PopoverContent>
-                  </Popover>
-                </TableCell>
-                <TableCell>
-                  <Switch 
-                    checked={cronJob.is_enabled} 
-                    onCheckedChange={(enabled) => handleCronToggle(cronJob, enabled)}
-                    disabled={togglingId === cronJob.id}
-                  />
-                </TableCell>
-                <TableCell className="text-right">
-                  <div className="flex items-center justify-end gap-1">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() => fetchCronJobLogs(cronJob)}
-                      title="View logs"
-                    >
-                      <FileText className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleRunCronJob(cronJob)}
-                      disabled={runningCronId === cronJob.id}
-                      title="Run now"
-                    >
-                      {runningCronId === cronJob.id ? (
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                      ) : (
-                        <RefreshCw className="h-4 w-4" />
-                      )}
-                    </Button>
-                  </div>
-                </TableCell>
-              </TableRow>
-            ))}
-          </TableBody>
-        </Table>
-      </div>
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+
+          {cronJobs.length === 0 && (
+            <p className="text-muted-foreground text-center py-8">
+              No scheduled maintenance jobs configured.
+            </p>
+          )}
+        </div>
+      )}
 
       {/* Job Logs Drawer - Resizable */}
       <Sheet 
