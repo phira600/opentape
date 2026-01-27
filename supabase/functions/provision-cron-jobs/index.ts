@@ -22,6 +22,7 @@ interface JobConfiguration {
   run_days?: string[]
   run_start_hour?: number
   run_end_hour?: number
+  fetch_interval_seconds?: number
 }
 
 // Static maintenance jobs - these use cron_job_configurations for schedules
@@ -82,6 +83,34 @@ function compactDayRange(days: number[]): string {
 }
 
 /**
+ * Build minute field for cron based on interval
+ * Examples:
+ * - 1 minute: "*" (every minute)
+ * - 5 minutes: "* /5" (every 5 min)
+ * - 30 minutes: "0,30" (explicit minutes)
+ * - 60 minutes: "0" (on the hour)
+ */
+function buildMinuteField(intervalMinutes: number): string {
+  if (intervalMinutes <= 1) {
+    return '*'
+  } else if (intervalMinutes === 60) {
+    return '0'
+  } else if (intervalMinutes === 30) {
+    return '0,30'
+  } else if (intervalMinutes === 20) {
+    return '0,20,40'
+  } else if (intervalMinutes === 15) {
+    return '0,15,30,45'
+  } else if (60 % intervalMinutes === 0) {
+    // Clean divisor of 60 - use */N syntax
+    return `*/${intervalMinutes}`
+  } else {
+    // Non-standard interval - use */N which will run approximately
+    return `*/${intervalMinutes}`
+  }
+}
+
+/**
  * Build cron schedule from job configuration with DST buffer.
  * Adds 1-hour buffer on each side to account for timezone DST shifts.
  * The actual schedule enforcement happens via guard clause in fetch-trade-files.
@@ -91,10 +120,13 @@ function buildCronScheduleWithBuffer(job: {
   run_start_hour?: number
   run_end_hour?: number
   timezone?: string
+  fetch_interval_seconds?: number
 }): string {
   const runDays = job.run_days || ['mon', 'tue', 'wed', 'thu', 'fri']
   const startHour = job.run_start_hour ?? 8
   const endHour = job.run_end_hour ?? 17
+  const intervalSeconds = job.fetch_interval_seconds ?? 60
+  const intervalMinutes = Math.max(1, Math.min(60, Math.round(intervalSeconds / 60)))
   
   // Map day names to cron day numbers (0=Sun, 1=Mon, ..., 6=Sat)
   const dayMap: Record<string, number> = {
@@ -121,9 +153,11 @@ function buildCronScheduleWithBuffer(job: {
     ? bufferStart.toString() 
     : `${bufferStart}-${bufferEnd}`
   
+  // Build minute field based on configured interval
+  const minuteField = buildMinuteField(intervalMinutes)
+  
   // Cron format: minute hour day-of-month month day-of-week
-  // Every minute within the buffered hour range on specified days
-  return `* ${hourRange} * * ${daysField}`
+  return `${minuteField} ${hourRange} * * ${daysField}`
 }
 
 Deno.serve(async (req) => {
@@ -188,7 +222,7 @@ Deno.serve(async (req) => {
     // === PART 1: Dynamic fetch jobs from job_configurations ===
     const { data: fetchJobs, error: fetchJobsError } = await supabase
       .from('job_configurations')
-      .select('id, name, source_type, is_enabled, run_days, run_start_hour, run_end_hour')
+      .select('id, name, source_type, is_enabled, run_days, run_start_hour, run_end_hour, fetch_interval_seconds')
       .eq('is_enabled', true)
 
     if (fetchJobsError) {
