@@ -731,9 +731,16 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     return lines;
   };
 
+  // Format timestamp to local time (e.g., "28 Jan 09:25")
+  const formatLocalTime = (dateStr: string | null): string => {
+    if (!dateStr) return "Never";
+    const date = new Date(dateStr);
+    return format(date, "d MMM HH:mm");
+  };
+
   const getNextRunTime = (job: JobConfiguration) => {
-    if (!job.is_enabled) return { text: "Disabled", relative: false };
-    if (job.last_status === "running") return { text: "Running", relative: false };
+    if (!job.is_enabled) return { text: "Disabled", isStatus: true };
+    if (job.last_status === "running") return { text: "Running", isStatus: true };
     
     // Use next_run_at from database if available
     if (job.next_run_at) {
@@ -741,34 +748,24 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
       const now = new Date();
       
       if (nextRun <= now) {
-        return { text: "Soon", relative: false };
+        return { text: "Soon", isStatus: true };
       }
       
-      const diffMs = nextRun.getTime() - now.getTime();
-      const diffSecs = Math.floor(diffMs / 1000);
-      
-      if (diffSecs < 60) {
-        return { text: `${diffSecs}s`, relative: true };
-      } else if (diffSecs < 3600) {
-        const mins = Math.floor(diffSecs / 60);
-        return { text: `${mins}m`, relative: true };
-      } else {
-        return { text: format(nextRun, "HH:mm"), relative: false };
-      }
+      return { text: format(nextRun, "d MMM HH:mm"), isStatus: false };
     }
     
     // Fallback to calculated time
-    if (!job.last_run_at) return { text: "Pending", relative: false };
+    if (!job.last_run_at) return { text: "Pending", isStatus: true };
     
     const lastRun = new Date(job.last_run_at);
     const interval = job.fetch_interval_seconds || 60;
     const nextRun = addSeconds(lastRun, interval);
     
     if (nextRun < new Date()) {
-      return { text: "Soon", relative: false };
+      return { text: "Soon", isStatus: true };
     }
     
-    return { text: format(nextRun, "HH:mm:ss"), relative: false };
+    return { text: format(nextRun, "d MMM HH:mm"), isStatus: false };
   };
 
   const toggleDay = (day: string) => {
@@ -908,14 +905,10 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                   </TooltipProvider>
                 </TableCell>
                 <TableCell>
-                  {job.last_run_at ? (
-                    <span className="text-sm text-muted-foreground flex items-center gap-1">
-                      <Clock className="h-3 w-3" />
-                      {formatDistanceToNow(new Date(job.last_run_at), { addSuffix: true })}
-                    </span>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">Never</span>
-                  )}
+                  <span className="text-sm text-muted-foreground flex items-center gap-1">
+                    <Clock className="h-3 w-3" />
+                    {formatLocalTime(job.last_run_at)}
+                  </span>
                 </TableCell>
                 <TableCell>
                   {(() => {
@@ -923,9 +916,8 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                     return (
                       <span className={cn(
                         "text-sm flex items-center gap-1",
-                        nextRun.relative ? "text-green-600 dark:text-green-400 font-medium" : "text-muted-foreground"
+                        nextRun.isStatus ? "text-muted-foreground" : "text-foreground"
                       )}>
-                        {nextRun.relative && <RefreshCw className="h-3 w-3" />}
                         {nextRun.text}
                       </span>
                     );
@@ -1151,14 +1143,10 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                       )}
                     </TableCell>
                     <TableCell>
-                      {cronJob.last_run_at ? (
-                        <span className="text-sm text-muted-foreground flex items-center gap-1">
-                          <Clock className="h-3 w-3" />
-                          {formatDistanceToNow(new Date(cronJob.last_run_at), { addSuffix: true })}
-                        </span>
-                      ) : (
-                        <span className="text-sm text-muted-foreground">Never</span>
-                      )}
+                      <span className="text-sm text-muted-foreground flex items-center gap-1">
+                        <Clock className="h-3 w-3" />
+                        {formatLocalTime(cronJob.last_run_at)}
+                      </span>
                     </TableCell>
                     <TableCell>
                       <Popover open={editingSchedule === cronJob.id} onOpenChange={(open) => {
