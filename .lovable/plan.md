@@ -1,95 +1,78 @@
 
-
-## Plan: Add Configurable Fetch Frequency (in Minutes)
+## Plan: Update Default Configurations for Setup/Installation
 
 ### Overview
 
-Add the ability to configure how often fetch jobs run (in minutes instead of every minute). This will reduce edge function invocations and cloud costs significantly.
+Synchronize the default configurations in setup/installation edge functions with the current production scheduling. This ensures new installations get the optimized settings (timezone-aware schedules, 5-minute fetch intervals).
 
-### Current vs. Proposed Behavior
+### Current Defaults vs. Required Defaults
 
-| Aspect | Current | Proposed |
-|--------|---------|----------|
-| Fetch frequency | Every minute (fixed) | Configurable (1-60 minutes) |
-| Cron schedule | `* 7-17 * * 1-5` | `*/5 7-17 * * 1-5` (if 5 min) |
-| `fetch_interval_seconds` column | Exists but unused for cron | Used to build cron schedule |
-| UI | No frequency control | Frequency slider/input in popover |
+#### Fetch Jobs (`provision-default-jobs`)
 
-### Cost Impact
+| Job | Current Default | Required Default |
+|-----|-----------------|------------------|
+| CBOE BXE/CXE/DXE | 06:00-21:00 UTC, 60s | 08:00-17:00 Europe/London, 300s |
+| LSEG LSE/TRQX/TQEX | 06:00-21:00 UTC, 60s | 08:00-17:00 Europe/London, 300s |
+| Nasdaq Nordic | 06:00-21:00 UTC, 60s | 09:00-18:00 Europe/Stockholm, 300s |
 
-Setting fetch frequency to 5 minutes instead of 1 minute will reduce edge function invocations by 80%:
-- Current: ~60 calls/hour per enabled job
-- With 5-min interval: ~12 calls/hour per enabled job
+#### UI Defaults (`DataSourceTable.tsx`)
 
----
-
-### Changes Required
-
-#### 1. UI Changes (`src/components/dashboard/DataSourceTable.tsx`)
-
-Add a frequency input to the schedule configuration popover:
-
-- Add `fetch_interval_minutes` to the `jobScheduleConfig` state
-- Add a number input or slider for "Fetch Frequency (minutes)" with range 1-60
-- Update `handleJobScheduleUpdate` to save `fetch_interval_seconds` (minutes * 60)
-- Update `formatJobSchedule` to display the frequency
-- Update the info popover to show "every X minutes" instead of raw seconds
-
-#### 2. Edge Function Changes (`supabase/functions/provision-cron-jobs/index.ts`)
-
-Modify `buildCronScheduleWithBuffer` to use the configured interval:
-
-- Read `fetch_interval_seconds` from job configuration
-- Convert to minutes for cron minute field
-- Use `*/N` syntax for cron (e.g., `*/5` for every 5 minutes)
-- Keep the DST buffer logic for hour range
-
-Example cron outputs:
-- 1 minute: `* 7-17 * * 1-5` (current behavior)
-- 5 minutes: `*/5 7-17 * * 1-5`
-- 15 minutes: `*/15 7-17 * * 1-5`
-- 30 minutes: `0,30 7-17 * * 1-5`
-- 60 minutes: `0 7-17 * * 1-5`
-
-#### 3. Update Job Configuration Select Query
-
-Update the select query in `provision-cron-jobs` to include `fetch_interval_seconds`.
+| Setting | Current Default | Required Default |
+|---------|-----------------|------------------|
+| `fetch_interval_minutes` | 1 | 5 |
+| `timezone` | "UTC" | "Europe/London" |
 
 ---
 
 ### Files to Modify
 
-| File | Changes |
-|------|---------|
-| `src/components/dashboard/DataSourceTable.tsx` | Add frequency input to schedule popover, update save handler |
-| `supabase/functions/provision-cron-jobs/index.ts` | Use `fetch_interval_seconds` in cron schedule generation |
+#### 1. `supabase/functions/provision-default-jobs/index.ts`
 
-### UI Mockup
+Update the `DefaultJob` interface to include `timezone`, then update all job definitions:
 
 ```text
-+----------------------------------------+
-| Schedule Configuration                  |
-+----------------------------------------+
-| Timezone: [Europe/London ▼]            |
-|                                        |
-| Fetch Frequency: [5] minutes           |
-| (How often to check for new data)      |
-|                                        |
-| Run Days: [Mon] [Tue] [Wed] [Thu] [Fri]|
-|                                        |
-| Start Hour: [08:00]  End Hour: [17:00] |
-|                                        |
-| (Times are in Europe/London, adjusted  |
-|  automatically for BST/GMT)            |
-|                                        |
-| [Save Schedule]                        |
-+----------------------------------------+
+CBOE jobs (BXE, CXE, DXE):
+  - timezone: 'Europe/London'
+  - fetch_interval_seconds: 300
+  - run_start_hour: 8
+  - run_end_hour: 17
+
+LSEG jobs (LSE, TRQX, TQEX):
+  - timezone: 'Europe/London'
+  - fetch_interval_seconds: 300
+  - run_start_hour: 8
+  - run_end_hour: 17
+
+Nasdaq Nordic:
+  - timezone: 'Europe/Stockholm'
+  - fetch_interval_seconds: 300
+  - run_start_hour: 9
+  - run_end_hour: 18
 ```
 
-### Technical Notes
+#### 2. `src/components/dashboard/DataSourceTable.tsx`
 
-- The `fetch_interval_seconds` column already exists in the database with default value 60
-- No database migration needed
-- The guard clause in `fetch-trade-files` will continue to work as-is (it checks local time, not frequency)
-- The `calculateNextRunTime` function in `fetch-trade-files` already uses `fetch_interval_seconds` for next run calculation
+Update the `jobScheduleConfig` initial state default:
 
+```typescript
+// Change from:
+fetch_interval_minutes: 1,
+timezone: "UTC",
+
+// To:
+fetch_interval_minutes: 5,
+timezone: "Europe/London",
+```
+
+---
+
+### Summary of Changes
+
+| File | Change |
+|------|--------|
+| `supabase/functions/provision-default-jobs/index.ts` | Add `timezone` field, update all 7 jobs with correct hours, timezone, and 5-min intervals |
+| `src/components/dashboard/DataSourceTable.tsx` | Update default `fetch_interval_minutes` from 1 to 5, `timezone` from "UTC" to "Europe/London" |
+
+### Edge Function Deployment
+
+After changes, the `provision-default-jobs` function will need to be deployed for new installations to use the updated defaults. Existing installations are unaffected since jobs already exist.
