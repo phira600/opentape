@@ -147,8 +147,8 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     run_days: ["mon", "tue", "wed", "thu", "fri"],
     run_start_hour: 8,
     run_end_hour: 17,
-    timezone: "UTC",
-    fetch_interval_minutes: 1,
+    timezone: "Europe/London",
+    fetch_interval_minutes: 5,
   });
   
   // Job logs drawer state
