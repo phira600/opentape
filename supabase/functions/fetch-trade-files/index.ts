@@ -235,7 +235,7 @@ Deno.serve(async (req) => {
         if (job.source_type === 'cboe' || job.source_type === 'cboe_bxe' || job.source_type === 'cboe_cxe' || job.source_type === 'cboe_dxe') {
           // CBOE has dynamic URLs based on venue and time - fetch all since last run
           const venue = job.source_type.replace('cboe_', '') === 'cboe' ? 'bxe' : job.source_type.replace('cboe_', '')
-          const cboeFiles = await fetchCboeDataSinceLastRun(venue, job.last_run_at)
+          const cboeFiles = await fetchCboeDataSinceLastRun(venue, job.last_run_at, job.fetch_interval_seconds || 60)
           files.push(...cboeFiles)
           console.log(`Fetched ${cboeFiles.length} CBOE ${venue.toUpperCase()} files`)
         } else if (job.source_type === 'nasdaq') {
@@ -504,7 +504,11 @@ Deno.serve(async (req) => {
 // CBOE URL pattern: https://www.cboe.com/europe/equities/trade_data/
 // Files are at: https://www.cboe.com/europe/equities/trade_data/{venue}/minute/rts13_public_trade_data_{venue}_{date}_{HHMM}.csv
 // Venues: bxe, cxe, dxe, apa
-async function fetchCboeDataSinceLastRun(venue: string, lastRunAt: string | null): Promise<FetchedFile[]> {
+async function fetchCboeDataSinceLastRun(
+  venue: string, 
+  lastRunAt: string | null, 
+  fetchIntervalSeconds: number = 60
+): Promise<FetchedFile[]> {
   const files: FetchedFile[] = []
   
   // Validate venue
@@ -514,28 +518,28 @@ async function fetchCboeDataSinceLastRun(venue: string, lastRunAt: string | null
 
   const now = new Date()
   
-  // End time is 5 minutes ago (data delay)
-  const endTime = new Date(now.getTime() - 5 * 60 * 1000)
-  
-  // Determine start time: max of (last_run_at, 2 hours ago)
-  // If no last run, go back 2 hours
-  let startTime: Date
-  if (lastRunAt) {
-    const lastRun = new Date(lastRunAt)
-    const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
-    // Use the more recent of: lastRun or twoHoursAgo
-    startTime = lastRun > twoHoursAgo ? lastRun : twoHoursAgo
-  } else {
-    // First run: go back 2 hours
-    startTime = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+  // CBOE files are named with UK time, ~15 minutes behind current time
+  const PUBLICATION_DELAY_MS = 15 * 60 * 1000  // 15 minutes
+  const SAFETY_OFFSET_MS = 10 * 60 * 1000       // 10 minutes safety margin
+  const intervalMs = fetchIntervalSeconds * 1000
+
+  // End time: now (look at all files on server)
+  const endTime = now
+
+  // Start time: go back far enough to capture all new files
+  // Formula: now - publication_delay - fetch_interval - safety_offset
+  const lookbackMs = PUBLICATION_DELAY_MS + intervalMs + SAFETY_OFFSET_MS
+  let startTime = new Date(now.getTime() - lookbackMs)
+
+  // Cap at 2 hours max for recovery scenarios
+  const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+  if (startTime < twoHoursAgo) {
+    startTime = twoHoursAgo
   }
-  
-  // If start is after end, swap or just try the last 30 mins
-  if (startTime >= endTime) {
-    startTime = new Date(endTime.getTime() - 30 * 60 * 1000)
-  }
-  
-  console.log(`CBOE ${venue.toUpperCase()}: Fetching files from ${startTime.toISOString()} to ${endTime.toISOString()}`)
+
+  // Log the window for debugging
+  const windowMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000)
+  console.log(`CBOE ${venue.toUpperCase()}: Window ${startTime.toISOString().slice(11, 16)} to ${endTime.toISOString().slice(11, 16)} (${windowMinutes} min, interval: ${fetchIntervalSeconds}s)`)
   
   // Generate all minute timestamps between start and end
   const currentTime = new Date(startTime)
