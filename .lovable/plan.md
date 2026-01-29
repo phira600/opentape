@@ -1,115 +1,81 @@
 
-## Plan: Display Last Run and Next Run Times in Local Time
 
-### Overview
+## Plan: Fix CBOE Time Window for File Discovery
 
-Change the "Last Run" and "Next Run" columns from relative times (e.g., "4 minutes ago") to absolute local times (e.g., "28 Jan 09:25") in the user's browser timezone.
+### Corrected Logic
 
-### Current vs. Proposed Display
+- **endTime** = `now` (look at all files currently on server)
+- **startTime** = `now - 15min (publication delay) - fetch_interval - 10min (safety offset)`
 
-| Column | Current Display | Proposed Display |
-|--------|-----------------|------------------|
-| Last Run | "4 minutes ago" | "28 Jan 09:25" |
-| Next Run | "5m", "Soon", "10:30" | "28 Jan 10:30" |
+### Example: 5-Minute Fetch Interval
 
-### Changes Required
+```text
+Run at 16:30 UK time:
+  - endTime = 16:30 (now)
+  - startTime = 16:00 (now - 15 - 5 - 10 = 30 min back)
+  - Window: 16:00 to 16:30
 
-#### 1. Add a Helper Function for Local Time Formatting
-
-Create a new formatting function that displays timestamps in the user's local timezone:
-
-```typescript
-const formatLocalTime = (dateStr: string | null): string => {
-  if (!dateStr) return "Never";
-  const date = new Date(dateStr);
-  return format(date, "d MMM HH:mm"); // e.g., "28 Jan 09:25"
-};
+Newest file on server: 16:15
+Previous run at 16:25 processed files up to 16:10
+New files found: 16:11, 16:12, 16:13, 16:14, 16:15 = 5 files
 ```
 
-The `date-fns` `format()` function automatically uses the browser's local timezone.
+### File Changes
 
-#### 2. Update Data Ingestion Jobs - Last Run (line 914)
+#### `supabase/functions/fetch-trade-files/index.ts`
 
-**Before:**
+**Change 1**: Update function signature (line ~507)
+
 ```typescript
-{formatDistanceToNow(new Date(job.last_run_at), { addSuffix: true })}
+async function fetchCboeDataSinceLastRun(
+  venue: string, 
+  lastRunAt: string | null, 
+  fetchIntervalSeconds: number = 60
+): Promise<FetchedFile[]>
 ```
 
-**After:**
+**Change 2**: Replace time window calculation (lines ~515-536)
+
 ```typescript
-{formatLocalTime(job.last_run_at)}
+const now = new Date()
+
+// CBOE files are named with UK time, ~15 minutes behind current time
+const PUBLICATION_DELAY_MS = 15 * 60 * 1000  // 15 minutes
+const SAFETY_OFFSET_MS = 10 * 60 * 1000       // 10 minutes safety margin
+const intervalMs = fetchIntervalSeconds * 1000
+
+// End time: now (look at all files on server)
+const endTime = now
+
+// Start time: go back far enough to capture all new files
+// Formula: now - publication_delay - fetch_interval - safety_offset
+const lookbackMs = PUBLICATION_DELAY_MS + intervalMs + SAFETY_OFFSET_MS
+let startTime = new Date(now.getTime() - lookbackMs)
+
+// Cap at 2 hours max for recovery scenarios
+const twoHoursAgo = new Date(now.getTime() - 2 * 60 * 60 * 1000)
+if (startTime < twoHoursAgo) {
+  startTime = twoHoursAgo
+}
+
+// Log for debugging
+const windowMinutes = Math.round((endTime.getTime() - startTime.getTime()) / 60000)
+console.log(`CBOE ${venue.toUpperCase()}: Window ${format(startTime, "HH:mm")} to ${format(endTime, "HH:mm")} (${windowMinutes} min)`)
 ```
 
-#### 3. Update `getNextRunTime()` Function (lines 734-772)
+**Change 3**: Update CBOE fetch calls (around line 238)
 
-Modify to return the formatted local time instead of relative strings:
-
-**Key changes:**
-- If `next_run_at` exists, return formatted date like "28 Jan 09:25"
-- If job is disabled/running/pending, keep the status text
-- Remove relative time logic (seconds/minutes countdown)
-
-**New function:**
 ```typescript
-const getNextRunTime = (job: JobConfiguration) => {
-  if (!job.is_enabled) return { text: "Disabled", isStatus: true };
-  if (job.last_status === "running") return { text: "Running", isStatus: true };
-  
-  if (job.next_run_at) {
-    const nextRun = new Date(job.next_run_at);
-    const now = new Date();
-    
-    if (nextRun <= now) {
-      return { text: "Soon", isStatus: true };
-    }
-    
-    return { text: format(nextRun, "d MMM HH:mm"), isStatus: false };
-  }
-  
-  if (!job.last_run_at) return { text: "Pending", isStatus: true };
-  
-  // Fallback calculation
-  const lastRun = new Date(job.last_run_at);
-  const interval = job.fetch_interval_seconds || 60;
-  const nextRun = addSeconds(lastRun, interval);
-  
-  return { text: format(nextRun, "d MMM HH:mm"), isStatus: false };
-};
+const cboeFiles = await fetchCboeDataSinceLastRun(venue, job.last_run_at, job.fetch_interval_seconds || 60)
 ```
 
-#### 4. Update Next Run Display (lines 920-932)
+### Expected Results
 
-Adjust the JSX to use the new return structure (rename `relative` to `isStatus` for clarity).
+| Fetch Interval | Total Lookback | Files per Run |
+|----------------|----------------|---------------|
+| 1 min | 26 min | ~1 new |
+| 5 min | 30 min | ~5 new |
+| 10 min | 35 min | ~10 new |
 
-#### 5. Update Cron Jobs - Last Run (line 1157)
+Already-processed files are skipped via hash-based deduplication in `processed_files` table.
 
-**Before:**
-```typescript
-{formatDistanceToNow(new Date(cronJob.last_run_at), { addSuffix: true })}
-```
-
-**After:**
-```typescript
-{formatLocalTime(cronJob.last_run_at)}
-```
-
----
-
-### Files to Modify
-
-| File | Lines | Change |
-|------|-------|--------|
-| `src/components/dashboard/DataSourceTable.tsx` | ~35 | Ensure `format` is imported from date-fns (already is) |
-| `src/components/dashboard/DataSourceTable.tsx` | ~600 | Add `formatLocalTime()` helper function |
-| `src/components/dashboard/DataSourceTable.tsx` | 734-772 | Update `getNextRunTime()` to return absolute times |
-| `src/components/dashboard/DataSourceTable.tsx` | 914 | Replace relative time with `formatLocalTime()` for Data Jobs Last Run |
-| `src/components/dashboard/DataSourceTable.tsx` | 920-932 | Update Next Run display logic |
-| `src/components/dashboard/DataSourceTable.tsx` | 1157 | Replace relative time with `formatLocalTime()` for Cron Jobs Last Run |
-
-### Technical Notes
-
-- The `date-fns` `format()` function is already imported (line 35)
-- `format()` automatically uses the browser's local timezone
-- Format pattern `"d MMM HH:mm"` produces "28 Jan 09:25" (day, abbreviated month, 24-hour time)
-- Status strings like "Disabled", "Running", "Pending", "Soon" remain unchanged
-- Tooltips with hover for full date/time could be added as a future enhancement
