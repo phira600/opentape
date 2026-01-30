@@ -31,6 +31,11 @@ import {
 } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { ResizablePanelGroup, ResizablePanel } from "@/components/ui/resizable";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
 import { RefreshCw, Clock, AlertCircle, CheckCircle2, Loader2, Calendar, Settings, CalendarIcon, Info, FileText, Copy, ExternalLink, AlertTriangle, ChevronRight, FileX, FileWarning, BarChart3, MinusCircle } from "lucide-react";
 import { formatDistanceToNow, addSeconds, format, subDays, startOfDay } from "date-fns";
 import {
@@ -47,6 +52,13 @@ interface ActivityLogEntry {
   message: string;
   details: unknown;
   created_at: string;
+}
+
+interface FileDetail {
+  name: string;
+  lines: number;
+  trades: number;
+  filtered: number;
 }
 
 const DAYS_OF_WEEK = [
@@ -231,10 +243,11 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
     }
   };
 
-  const formatLogMessage = (log: ActivityLogEntry): { title: string; details: string[]; error?: string } => {
+  const formatLogMessage = (log: ActivityLogEntry): { title: string; details: string[]; error?: string; fileDetails?: FileDetail[] } => {
     const details: string[] = [];
     let title = log.message;
     let error: string | undefined;
+    let fileDetails: FileDetail[] | undefined;
     
     if (log.details && typeof log.details === "object" && log.details !== null) {
       const d = log.details as Record<string, unknown>;
@@ -242,6 +255,11 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
       // Extract error message if present
       if (d.error && typeof d.error === "string") {
         error = d.error;
+      }
+      
+      // Extract file_details if present
+      if (d.file_details && Array.isArray(d.file_details)) {
+        fileDetails = d.file_details as FileDetail[];
       }
       
       if (d.files_processed !== undefined) {
@@ -296,7 +314,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
       }
     }
     
-    return { title, details, error };
+    return { title, details, error, fileDetails };
   };
 
   useEffect(() => {
@@ -1372,7 +1390,7 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                   ) : (
                     <div className="divide-y">
                       {jobLogs.map((log) => {
-                        const { title, details, error } = formatLogMessage(log);
+                        const { title, details, error, fileDetails } = formatLogMessage(log);
                         return (
                           <div 
                             key={log.id} 
@@ -1419,6 +1437,63 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
                                       </span>
                                     ))}
                                   </div>
+                                )}
+                                {fileDetails && fileDetails.length > 0 && (
+                                  <Collapsible className="mt-3">
+                                    <CollapsibleTrigger className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground transition-colors group cursor-pointer">
+                                      <ChevronRight className="h-3 w-3 transition-transform group-data-[state=open]:rotate-90" />
+                                      <span>{fileDetails.length} files processed</span>
+                                      {fileDetails.some(f => f.filtered > 0) && (
+                                        <span className="text-orange-500">
+                                          ({fileDetails.reduce((sum, f) => sum + f.filtered, 0)} filtered)
+                                        </span>
+                                      )}
+                                    </CollapsibleTrigger>
+                                    <CollapsibleContent className="mt-2">
+                                      <div className="rounded-md border bg-muted/30 overflow-hidden">
+                                        <table className="w-full text-xs">
+                                          <thead>
+                                            <tr className="border-b bg-muted/50">
+                                              <th className="text-left px-3 py-1.5 font-medium">File</th>
+                                              <th className="text-right px-3 py-1.5 font-medium w-20">Lines</th>
+                                              <th className="text-right px-3 py-1.5 font-medium w-20">Trades</th>
+                                              {fileDetails.some(f => f.filtered > 0) && (
+                                                <th className="text-right px-3 py-1.5 font-medium w-20">Filtered</th>
+                                              )}
+                                            </tr>
+                                          </thead>
+                                          <tbody>
+                                            {fileDetails.map((file, idx) => (
+                                              <tr key={idx} className="border-b last:border-0">
+                                                <td className="px-3 py-1.5 font-mono truncate max-w-[300px]" title={file.name}>
+                                                  {file.name}
+                                                </td>
+                                                <td className="text-right px-3 py-1.5 text-muted-foreground">
+                                                  {file.lines.toLocaleString()}
+                                                </td>
+                                                <td className="text-right px-3 py-1.5">
+                                                  {file.trades > 0 ? (
+                                                    <span className="text-green-600">{file.trades.toLocaleString()}</span>
+                                                  ) : (
+                                                    <span className="text-muted-foreground">0</span>
+                                                  )}
+                                                </td>
+                                                {fileDetails.some(f => f.filtered > 0) && (
+                                                  <td className="text-right px-3 py-1.5">
+                                                    {file.filtered > 0 ? (
+                                                      <span className="text-orange-500">{file.filtered.toLocaleString()}</span>
+                                                    ) : (
+                                                      <span className="text-muted-foreground">-</span>
+                                                    )}
+                                                  </td>
+                                                )}
+                                              </tr>
+                                            ))}
+                                          </tbody>
+                                        </table>
+                                      </div>
+                                    </CollapsibleContent>
+                                  </Collapsible>
                                 )}
                               </div>
                             </div>
