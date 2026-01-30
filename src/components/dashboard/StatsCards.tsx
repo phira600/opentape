@@ -39,6 +39,16 @@ export function StatsCards() {
       .from("daily_stats" as any)
       .select("total_trades") as any;
 
+    // Get the most recent stats update time (from any date, not just today)
+    const { data: latestStatsRow } = await supabase
+      .from("daily_stats" as any)
+      .select("last_updated")
+      .order("last_updated", { ascending: false })
+      .limit(1)
+      .maybeSingle() as any;
+
+    const latestStatsUpdated = latestStatsRow?.last_updated || null;
+
     const allTimeTrades = allTimeData?.reduce(
       (sum: number, day: { total_trades: number | string }) => sum + Number(day.total_trades), 0
     ) || 0;
@@ -59,7 +69,7 @@ export function StatsCards() {
         totalSymbols: dailyStats.unique_symbols || 0,
         totalVenues: dailyStats.unique_venues || 0,
         lastFetch: lastJob?.last_run_at || null,
-        statsUpdated: dailyStats.last_updated || null,
+        statsUpdated: latestStatsUpdated,
       });
       return;
     }
@@ -90,7 +100,7 @@ export function StatsCards() {
       totalSymbols: uniqueSymbols.size,
       totalVenues: uniqueVenues.size,
       lastFetch: lastJob?.last_run_at || null,
-      statsUpdated: null,
+      statsUpdated: latestStatsUpdated,
     });
   };
 
