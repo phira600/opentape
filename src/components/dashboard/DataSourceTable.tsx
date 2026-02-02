@@ -769,7 +769,19 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
         return { text: "Soon", isStatus: true };
       }
       
-      return { text: format(nextRun, "d MMM HH:mm"), isStatus: false };
+      // next_run_at is stored as UTC but represents the scheduled local time
+      // The job's configured timezone determines when it should run in local market time
+      // Display the job's scheduled local time (which is what the job is configured for)
+      const jobTimezone = job.timezone || "UTC";
+      const scheduledLocalTime = nextRun.toLocaleString("en-GB", {
+        timeZone: jobTimezone,
+        day: "numeric",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false,
+      });
+      return { text: scheduledLocalTime, isStatus: false };
     }
     
     // Fallback to calculated time
@@ -783,7 +795,17 @@ export function DataSourceTable({ jobs, onUpdate, showCronJobs = true }: DataSou
       return { text: "Soon", isStatus: true };
     }
     
-    return { text: format(nextRun, "d MMM HH:mm"), isStatus: false };
+    // Use job timezone for fallback as well
+    const jobTimezone = job.timezone || "UTC";
+    const fallbackTime = nextRun.toLocaleString("en-GB", {
+      timeZone: jobTimezone,
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    return { text: fallbackTime, isStatus: false };
   };
 
   const toggleDay = (day: string) => {
