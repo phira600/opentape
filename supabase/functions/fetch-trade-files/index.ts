@@ -76,26 +76,40 @@ function isWithinLocalSchedule(job: JobConfiguration): {
   return { withinSchedule: true, localTime: localTimeStr }
 }
 
-// Calculate next run time based on job schedule
+// Calculate next run time based on job schedule, respecting the job's timezone
 function calculateNextRunTime(job: JobConfiguration): string {
   const now = new Date()
   const intervalSeconds = job.fetch_interval_seconds || 60
   const runDays = job.run_days || ['mon', 'tue', 'wed', 'thu', 'fri']
   const runStartHour = job.run_start_hour ?? 6
   const runEndHour = job.run_end_hour ?? 21
+  const timezone = job.timezone || 'UTC'
   
   // Day mapping
   const dayNames = ['sun', 'mon', 'tue', 'wed', 'thu', 'fri', 'sat']
   
+  // Helper to get local day and hour for a given UTC date in the job's timezone
+  const getLocalTimeInfo = (date: Date): { day: string; hour: number } => {
+    const formatter = new Intl.DateTimeFormat('en-GB', {
+      timeZone: timezone,
+      hour: 'numeric',
+      weekday: 'short',
+      hour12: false
+    })
+    const parts = formatter.formatToParts(date)
+    const hour = parseInt(parts.find(p => p.type === 'hour')?.value || '0')
+    const day = parts.find(p => p.type === 'weekday')?.value?.toLowerCase() || ''
+    return { day, hour }
+  }
+  
+  // Check if a UTC date falls within the job's local schedule window
+  const checkScheduleWindow = (date: Date): boolean => {
+    const { day, hour } = getLocalTimeInfo(date)
+    return runDays.includes(day) && hour >= runStartHour && hour < runEndHour
+  }
+  
   // Start with next run based on interval
   let nextRun = new Date(now.getTime() + intervalSeconds * 1000)
-  
-  // Check if next run is within schedule window
-  const checkScheduleWindow = (date: Date): boolean => {
-    const dayName = dayNames[date.getUTCDay()]
-    const hour = date.getUTCHours()
-    return runDays.includes(dayName) && hour >= runStartHour && hour < runEndHour
-  }
   
   // If within window, return the interval-based time
   if (checkScheduleWindow(nextRun)) {
