@@ -1,4 +1,8 @@
-project_id = "skexlbkhxhoeyghquvux"
+# project_id is set automatically by 'npx supabase link'
+# Do not hardcode a project_id here - it will be populated when you link your project
+
+[functions.provision-default-admin]
+verify_jwt = false
 
 [functions.fetch-trade-files]
 verify_jwt = false
