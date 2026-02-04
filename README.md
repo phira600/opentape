@@ -9,7 +9,7 @@ Deploy opentape in under 30 minutes using **GitHub Codespaces** (for backend set
 ### Prerequisites
 
 You'll need accounts on these free services:
-- [GitHub](https://github.com) - Code hosting
+- [GitHub](https://github.com) - Code hosting (Codespaces free tier: 60 hours/month)
 - [Supabase](https://supabase.com) - Backend (database, authentication, edge functions)
 - [Vercel](https://vercel.com) - Frontend hosting
 
@@ -17,7 +17,7 @@ You'll need accounts on these free services:
 
 ## Step 1: Fork the Repository
 
-1. Go to the opentape repository on GitHub
+1. Go to the opentape repository on GitHub (the URL where you found this README)
 2. Click the **Fork** button in the top-right corner
 3. Select your GitHub account as the destination
 4. Wait for the fork to complete - you now have your own copy of opentape
@@ -30,7 +30,7 @@ You'll need accounts on these free services:
 2. Click **New Project**
 3. Fill in:
    - **Name:** `opentape` (or any name you prefer)
-   - **Database Password:** Create a strong password and **save it somewhere safe**
+   - **Database Password:** Create a strong password using only letters and numbers (avoid special characters like `$`, `@`, `!` as they can cause issues)
    - **Region:** Choose the closest to your users
 4. Click **Create new project** and wait 2-3 minutes for setup
 
@@ -60,6 +60,8 @@ GitHub Codespaces gives you a cloud development environment - no need to install
 
 You now have a VS Code editor in your browser with all tools pre-installed.
 
+> **Note:** Codespaces free tier includes 60 hours/month. If your session times out, just reconnect and continue from where you left off.
+
 ---
 
 ## Step 4: Login to Supabase CLI
@@ -67,7 +69,6 @@ You now have a VS Code editor in your browser with all tools pre-installed.
 In the Codespaces terminal (bottom of the screen), run this command:
 
 ```bash
-# Login to Supabase (this opens a browser window)
 npx supabase login
 ```
 
@@ -80,7 +81,6 @@ When prompted, authorize the CLI in the browser window that opens.
 ## Step 5: Link to Your Supabase Project
 
 ```bash
-# Link this codebase to your Supabase project
 npx supabase link --project-ref YOUR_PROJECT_ID
 ```
 
@@ -90,7 +90,20 @@ When prompted for the database password, enter the password you created in Step 
 
 ---
 
-## Step 6: Run Database Migrations
+## Step 6: Enable Required Extensions
+
+In Supabase dashboard:
+
+1. Go to **Database** → **Extensions** (in the left sidebar)
+2. Search for and enable these extensions:
+   - `pg_cron` - For scheduled tasks
+   - `pg_net` - For HTTP requests from the database
+
+> **Important:** Enable these extensions before running migrations to ensure all database features work correctly.
+
+---
+
+## Step 7: Run Database Migrations
 
 This creates all the tables and configurations needed:
 
@@ -102,7 +115,7 @@ Type `y` when asked to confirm.
 
 ---
 
-## Step 7: Deploy Edge Functions
+## Step 8: Deploy Edge Functions
 
 ```bash
 npx supabase functions deploy
@@ -110,28 +123,26 @@ npx supabase functions deploy
 
 This deploys all the backend functions. Wait for each one to complete.
 
----
+### Verify Deployment
 
-## Step 8: Enable Required Extensions
+After deployment finishes:
+1. Go to your Supabase dashboard
+2. Navigate to **Edge Functions** in the left sidebar
+3. Confirm you see all functions listed (should be around 12-15 functions)
 
-In Supabase dashboard:
-
-1. Go to **Database** → **Extensions** (in the left sidebar)
-2. Search for and enable these extensions:
-   - `pg_cron` - For scheduled tasks
-   - `pg_net` - For HTTP requests from the database
+> **Note:** Wait about 30-60 seconds after deployment before proceeding to the next step. Edge functions need time to become available.
 
 ---
 
 ## Step 9: Bootstrap the Admin User
 
-Run this command in Codespaces (replace YOUR_PROJECT_ID):
+Run this command in Codespaces (replace `YOUR_PROJECT_ID` with your actual project ID):
 
 ```bash
 curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-admin
 ```
 
-You should see a response with:
+You should see a response like:
 ```json
 {
   "success": true,
@@ -143,6 +154,8 @@ You should see a response with:
 ```
 
 **Save these credentials** - you'll use them to log in.
+
+> **Troubleshooting:** If you get a 404 error, wait another 30 seconds and try again. If it still fails, check that edge functions deployed successfully in Step 8.
 
 ---
 
@@ -174,34 +187,42 @@ Your app is now live! Click the URL Vercel gives you to open it.
 ## Step 11: Complete Initial Setup
 
 1. Open your deployed app URL
-2. Click **Login**
+2. You'll be redirected to the login page automatically
 3. Enter the default credentials:
    - Email: `admin@opentape.local`
    - Password: `admin123!`
-4. **Immediately change your password** in Settings
+4. **Important:** Change your password immediately in Settings after logging in
 
 ### Initialize Data Sources and Cron Jobs
 
-After logging in, initialize the system via the Codespaces terminal:
+After logging in, set up the data pipelines using these commands in Codespaces.
 
-First, get your access token from the browser:
-1. Open browser Developer Tools (F12 or right-click → Inspect)
-2. Go to **Application** tab → **Local Storage** → your app URL
-3. Find the key that contains `access_token` and copy the token value
+**Option A: Using Service Role Key (Recommended for initial setup)**
 
-Then run these commands in Codespaces:
+Run these commands using your Service Role Key (simpler, no need to extract tokens):
 
 ```bash
 # Set up default data sources
 curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-default-jobs \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+  -H "Authorization: Bearer YOUR_SERVICE_ROLE_KEY"
 
 # Set up scheduled tasks
 curl -X POST https://YOUR_PROJECT_ID.supabase.co/functions/v1/provision-cron-jobs \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
+  -H "Authorization: Bearer YOUR_SERVICE_ROLE_KEY"
 ```
 
-Replace `YOUR_PROJECT_ID` and `YOUR_ACCESS_TOKEN` with your values.
+Replace:
+- `YOUR_PROJECT_ID` with your Supabase project ID
+- `YOUR_SERVICE_ROLE_KEY` with your Service Role Key from Step 2
+
+**Option B: Using Access Token (Alternative)**
+
+If you prefer to use your logged-in session:
+1. Open browser Developer Tools (F12 or right-click → Inspect)
+2. Go to **Application** tab → **Local Storage** → your app URL
+3. Find the key starting with `sb-` that contains `access_token`
+4. Copy the `access_token` value from within that JSON object
+5. Use that token in place of `YOUR_SERVICE_ROLE_KEY` above
 
 ---
 
@@ -223,6 +244,19 @@ Your opentape instance is now fully configured with:
 - Make sure you're using `admin@opentape.local` (not your email)
 - Password is `admin123!` (with the exclamation mark)
 
+### Edge function returns 404
+- Wait 30-60 seconds after deployment before calling functions
+- Check Supabase Dashboard → Edge Functions to verify deployment
+- Try redeploying with `npx supabase functions deploy`
+
+### "Database password error" during linking
+- Avoid special characters like `$`, `@`, `!` in your database password
+- If needed, reset password in Supabase Dashboard → Settings → Database
+
+### Codespaces session expired
+- Simply reconnect to Codespaces and continue from where you left off
+- Your progress is saved; just run the next command in sequence
+
 ### Edge functions not working
 - Check Supabase Dashboard → Edge Functions → Logs for errors
 - Make sure all environment variables are set correctly in Vercel
@@ -230,6 +264,10 @@ Your opentape instance is now fully configured with:
 ### Data not appearing
 - Check that cron jobs are enabled in Supabase Dashboard → Database → Extensions → pg_cron
 - View logs in Supabase Dashboard → Edge Functions
+
+### "provision-default-admin" returns error about existing admin
+- This is expected! The admin user already exists
+- Just proceed to login with the default credentials
 
 ### Need to redeploy after changes
 - Push changes to GitHub - Vercel auto-deploys
