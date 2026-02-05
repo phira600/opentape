@@ -1032,9 +1032,9 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
       console.log(`LSEG: First URL attempt: ${urlsToTry[0].url}`)
     }
     
-    // Fetch files in batches of 5
-    for (let i = 0; i < urlsToTry.length; i += 5) {
-      const batch = urlsToTry.slice(i, i + 5)
+    // Fetch files in batches of 3 (reduced from 5 for rate limiting)
+    for (let i = 0; i < urlsToTry.length; i += 3) {
+      const batch = urlsToTry.slice(i, i + 3)
       
       // Log first URL of each batch for debugging
       if (i === 0) {
@@ -1046,8 +1046,17 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
           try {
             const response = await fetch(url, {
               headers: {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-                'Accept': 'text/csv,application/gzip,*/*',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'Accept': 'text/csv,application/gzip,application/octet-stream,*/*',
+                'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
+                'Accept-Encoding': 'gzip, deflate, br',
+                'Referer': 'https://dmd.lseg.com/',
+                'Origin': 'https://dmd.lseg.com',
+                'Connection': 'keep-alive',
+                'Cache-Control': 'no-cache',
+                'Sec-Fetch-Dest': 'document',
+                'Sec-Fetch-Mode': 'navigate',
+                'Sec-Fetch-Site': 'same-origin'
               }
             })
             
@@ -1089,9 +1098,9 @@ async function fetchLsegDataSinceLastRun(sourceUrl: string, supabase: any, jobId
         }
       }
       
-      // Small delay between batches
-      if (i + 5 < urlsToTry.length) {
-        await new Promise(r => setTimeout(r, 200))
+      // Delay between batches (500ms to respect rate limiting)
+      if (i + 3 < urlsToTry.length) {
+        await new Promise(r => setTimeout(r, 500))
       }
     }
     
