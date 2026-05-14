@@ -22,6 +22,7 @@ export function Header() {
     { path: "/api-test", label: "API Test", icon: FlaskConical },
     { path: "/settings", label: "Settings", icon: Settings },
     { path: "/faq", label: "FAQ", icon: HelpCircle },
+    { path: "/costs", label: "Costs", icon: Wallet },
     { path: "/terms", label: "Terms" },
   ];
 
