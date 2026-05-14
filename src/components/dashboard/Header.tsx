@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { useAuth } from "@/hooks/useAuth";
 import { Button } from "@/components/ui/button";
-import { LogOut, FileText, FlaskConical, Settings, HelpCircle, Menu } from "lucide-react";
+import { LogOut, FileText, FlaskConical, Settings, HelpCircle, Menu, Wallet } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
