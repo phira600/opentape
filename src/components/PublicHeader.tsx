@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import { FileText, FlaskConical, HelpCircle, Menu, LogIn } from "lucide-react";
+import { FileText, FlaskConical, HelpCircle, Menu, LogIn, Wallet } from "lucide-react";
 import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import {
@@ -18,6 +18,7 @@ export function PublicHeader() {
     { path: "/api-docs", label: "API Docs", icon: FileText },
     { path: "/api-test", label: "API Test", icon: FlaskConical },
     { path: "/faq", label: "FAQ", icon: HelpCircle },
+    { path: "/costs", label: "Costs", icon: Wallet },
     { path: "/terms", label: "Terms" },
   ];
 

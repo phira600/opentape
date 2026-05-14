@@ -10,6 +10,7 @@ import ApiTest from "./pages/ApiTest";
 import Settings from "./pages/Settings";
 import TermsOfUse from "./pages/TermsOfUse";
 import FAQ from "./pages/FAQ";
+import Costs from "./pages/Costs";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 import NotFound from "./pages/NotFound";
 
@@ -43,6 +44,7 @@ const App = () => (
           />
           <Route path="/terms" element={<TermsOfUse />} />
           <Route path="/faq" element={<FAQ />} />
+          <Route path="/costs" element={<Costs />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
