@@ -1,156 +1,76 @@
+# Lovable Cloud Cost Simulator
 
+Add a public `/costs` page that explains how Lovable Cloud pricing applies to opentape and lets users simulate monthly cost based on adjustable parameters. All pricing constants hardcoded from Lovable Cloud docs (easy to update later).
 
-# LSEG Headerless Access Fix
+## Pricing model (hardcoded constants)
 
-## Problem Analysis
+Lovable Cloud bills usage on top of subscription. Free monthly allowance: **$25 Cloud + $1 AI**. Main billable dimensions for opentape:
 
-The LSEG data fetching is failing because the current implementation uses minimal HTTP headers when requesting files from `dmd.lseg.com`. While LSEG's new DMD service (launched December 2025) no longer requires user registration, it still employs anti-bot measures that validate request headers.
+- **Compute / instance size** — fixed monthly fee per Postgres instance tier (Micro ~$10, Small ~$25, Medium ~$60, etc.)
+- **Database storage** — $/GB-month
+- **Egress (data transfer out)** — $/GB
+- **Edge function invocations** — $/million
+- **Database read units** — $/million row reads (approx.)
 
-### Current Implementation Issue
+Constants will live in `src/lib/cloudPricing.ts` with a comment linking to Lovable Cloud pricing docs and a "last updated" date.
 
-The existing fetch call in `supabase/functions/fetch-trade-files/index.ts` (lines 1047-1052) only sends:
+## Page: `/costs` (public)
 
-```text
-User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36
-Accept: text/csv,application/gzip,*/*
-```
+Layout: single column, hero + 3 sections.
 
-This is insufficient - the LSEG server expects headers that indicate a legitimate browser session.
+1. **How Lovable Cloud pricing works** — short explainer (4-6 bullets) covering the $25 free allowance, what counts as Cloud usage, and which opentape activities drive each cost.
+2. **Cost simulator** (interactive)
+3. **Result breakdown + verdict** ("Yes, fits in $20/mo if…" / "Will exceed $20/mo because…")
 
-### Evidence
+### Inputs (sliders + number fields)
 
-- All 3 LSEG jobs (TRQX, TQEX, XLON) are currently **disabled**
-- Last successful runs were on January 9, 2026
-- No recent LSEG-related entries in activity logs
-- The server likely returns 403 Forbidden or redirects to a challenge page when headers are incomplete
+| Input | Default | Range | Drives |
+|---|---|---|---|
+| Number of enabled venues | 6 | 1–10 | invocations, trades |
+| Fetch interval (minutes) | 5 | 1–60 | edge function invocations |
+| Market hours per day | 9 | 1–24 | invocations |
+| Trading days per month | 21 | 1–31 | invocations, trades |
+| Avg trades ingested per day | 500,000 | 1k–10M | DB writes, storage |
+| Data retention (days) | 7 | 1–90 | DB storage |
+| External API requests per day | 1,000 | 0–1M | invocations, egress |
+| Avg API response size (KB) | 5 | 1–500 | egress |
+| Instance tier | Micro | Micro/Small/Medium | fixed compute |
 
----
+### Computed outputs
 
-## Solution
+- Edge function invocations / month = `venues × (60/interval) × hours × days + apiRequests × 30`
+- DB storage GB = `trades/day × retention × bytes_per_trade / 1e9` (assume ~250 B/trade incl. indexes; documented inline)
+- Egress GB = `apiRequests × 30 × respSize / 1e6`
+- Per-line cost = usage × unit price, minus $25 free allowance applied to total Cloud spend
+- Final monthly cost in USD with breakdown table
 
-Update the LSEG fetch headers to fully mimic a browser session. This approach is already used successfully for Nasdaq fetching (lines 789-795) which includes `Referer` and `Origin` headers.
+### Result UI
 
-### Changes Required
+- Big total `$XX.XX / month`
+- Breakdown table (line item, usage, unit price, cost)
+- Color-coded badge: green ≤ $20, amber ≤ $50, red > $50
+- Note explaining that subscription credits (build messages) are separate
 
-**File**: `supabase/functions/fetch-trade-files/index.ts`
+## Placement & navigation
 
-**Location**: Lines 1047-1052 (the `fetchLsegDataSinceLastRun` function)
+- New route `/costs` registered in `src/App.tsx`
+- Public, no auth required (matches `/api-docs`, `/faq` pattern)
+- Add link in `PublicHeader` and footer / FAQ cross-link
 
-**Update the headers object to include:**
+## Files to add / edit
 
-| Header | Value | Purpose |
-|--------|-------|---------|
-| `User-Agent` | Full Chrome UA string | Identify as modern browser |
-| `Accept` | `text/csv,application/gzip,application/octet-stream,*/*` | Accept file types |
-| `Accept-Language` | `en-GB,en-US;q=0.9,en;q=0.8` | Language preference |
-| `Accept-Encoding` | `gzip, deflate, br` | Compression support |
-| `Referer` | `https://dmd.lseg.com/` | Simulate navigation from DMD homepage |
-| `Origin` | `https://dmd.lseg.com` | CORS origin |
-| `Connection` | `keep-alive` | Persistent connection |
-| `Cache-Control` | `no-cache` | Prevent cached responses |
-| `Sec-Fetch-Dest` | `document` | Browser security context |
-| `Sec-Fetch-Mode` | `navigate` | Navigation mode |
-| `Sec-Fetch-Site` | `same-origin` | Same-origin request |
+- **add** `src/pages/Costs.tsx` — page component
+- **add** `src/lib/cloudPricing.ts` — pricing constants + calc helpers (pure functions, easy to unit-test mentally)
+- **edit** `src/App.tsx` — register `/costs` route
+- **edit** `src/components/PublicHeader.tsx` — nav link "Costs"
+- **edit** `src/pages/FAQ.tsx` — link to /costs from a "How much does it cost to run?" entry
 
-### Code Change
+## Out of scope
 
-```typescript
-// Replace lines 1047-1052 with:
-const response = await fetch(url, {
-  headers: {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-    'Accept': 'text/csv,application/gzip,application/octet-stream,*/*',
-    'Accept-Language': 'en-GB,en-US;q=0.9,en;q=0.8',
-    'Accept-Encoding': 'gzip, deflate, br',
-    'Referer': 'https://dmd.lseg.com/',
-    'Origin': 'https://dmd.lseg.com',
-    'Connection': 'keep-alive',
-    'Cache-Control': 'no-cache',
-    'Sec-Fetch-Dest': 'document',
-    'Sec-Fetch-Mode': 'navigate',
-    'Sec-Fetch-Site': 'same-origin'
-  }
-})
-```
+- No Lovable subscription/credit math (Cloud only, per your answer)
+- No persistence of simulator state (pure client-side)
+- No live usage pulled from the database (could be a follow-up: "Use my actual last-7-day usage")
 
----
+## Answer to the $20/month question (preview, will be in the page copy)
 
-## Additional Improvements
-
-### 1. Add Request Delay Between Batches
-
-The current 200ms delay between batches may be too aggressive. Increase to 500-1000ms to avoid rate limiting:
-
-```typescript
-// Line 1094: Change from 200 to 500
-await new Promise(r => setTimeout(r, 500))
-```
-
-### 2. Add Response Status Logging
-
-Improve debugging by logging HTTP status for failed requests:
-
-```typescript
-if (!response.ok) {
-  console.log(`LSEG: ${fileName} failed with HTTP ${response.status}`)
-}
-```
-
-### 3. Reduce Batch Size
-
-Consider reducing from 5 concurrent requests to 3 to be gentler on the server:
-
-```typescript
-// Line 1036: Change batch size from 5 to 3
-for (let i = 0; i < urlsToTry.length; i += 3) {
-  const batch = urlsToTry.slice(i, i + 3)
-```
-
----
-
-## Alternative Solutions (If Headers Don't Work)
-
-If the extended headers approach still fails, here are fallback options:
-
-### Option A: Headless Browser Proxy
-
-Use a service like Browserless.io or Puppeteer-as-a-service to fetch files through a real browser instance. This would require:
-- Adding an API key for the browser service
-- Creating a proxy edge function that uses the browser API
-
-### Option B: Server-Side Scraping Service
-
-Use Firecrawl (already available as a connector) to scrape the LSEG DMD page and extract file URLs with full browser rendering.
-
-### Option C: Official LSEG API
-
-Contact LSEG to inquire about official API access for post-trade data. MiFID II regulations require venues to provide free delayed data, but the delivery mechanism may have official endpoints beyond the web interface.
-
----
-
-## Implementation Steps
-
-1. Update the LSEG fetch headers in `fetch-trade-files` edge function
-2. Increase batch delay to 500ms
-3. Add improved error logging
-4. Deploy the edge function
-5. Enable one LSEG job (e.g., `lseg_xlon`) for testing
-6. Manually trigger the job and monitor logs
-7. Verify files are downloaded successfully
-
----
-
-## Technical Details
-
-### Files to Modify
-
-| File | Changes |
-|------|---------|
-| `supabase/functions/fetch-trade-files/index.ts` | Update headers in LSEG fetch (lines 1047-1052), increase delay (line 1094), reduce batch size (line 1036) |
-
-### Expected Outcome
-
-- LSEG files should download successfully with proper browser-like headers
-- HTTP 200 responses instead of 403 or redirects
-- Trade data from LSE, Turquoise UK, and Turquoise Europe venues restored
-
+With current defaults (6 venues, 5-min interval, 7-day retention, light external API traffic, Micro instance), opentape should land in the **$10–25/month** Cloud usage range — well within $20 if you stay on Micro and the $25 free allowance covers the bulk. The biggest knobs are **fetch interval** (1-min × 6 venues × 9h × 21d ≈ 68k invocations/mo just for ingestion) and **instance tier**. Going to 1-minute intervals or upgrading to Small instance pushes you past $20.
